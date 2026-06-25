@@ -67,11 +67,11 @@ const RootLayout: React.FC = () => {
           <header className="glass sticky top-0 z-50 px-6 py-4 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="bg-primary p-2 rounded-lg text-white shadow-md shadow-primary/20">
-                <BookOpen className="h-6 w-6" />
+                <BookOpen className="h-6 w-6" aria-hidden="true" />
               </div>
               <div>
                 <h1 className="text-xl font-bold tracking-tight text-white m-0 leading-none">Booklet Studio</h1>
-                <p className="text-zinc-500 text-xs mt-1">Duplex Imposition & Semantic Search</p>
+                <p className="text-zinc-400 text-xs mt-1">Duplex Imposition & Semantic Search</p>
               </div>
             </div>
 
@@ -82,7 +82,7 @@ const RootLayout: React.FC = () => {
                 inactiveProps={{ className: "text-zinc-400 hover:text-white hover:bg-white/5 border-transparent" }}
                 className="px-4 py-2 rounded-lg text-sm font-medium border transition-all flex items-center gap-2"
               >
-                <BookOpen className="h-4 w-4" />
+                <BookOpen className="h-4 w-4" aria-hidden="true" />
                 Dashboard
               </Link>
               <Link 
@@ -91,22 +91,22 @@ const RootLayout: React.FC = () => {
                 inactiveProps={{ className: "text-zinc-400 hover:text-white hover:bg-white/5 border-transparent" }}
                 className="px-4 py-2 rounded-lg text-sm font-medium border transition-all flex items-center gap-2"
               >
-                <Search className="h-4 w-4" />
+                <Search className="h-4 w-4" aria-hidden="true" />
                 Semantic Search
               </Link>
             </nav>
 
             <div className="flex items-center gap-4">
               <div className="hidden md:flex items-center gap-2 bg-zinc-900/50 border border-zinc-800/80 px-3 py-1.5 rounded-lg">
-                <User className="h-4 w-4 text-zinc-400" />
+                <User className="h-4 w-4 text-zinc-400" aria-hidden="true" />
                 <span className="text-zinc-300 text-xs font-medium">{authStatus.user?.name || authStatus.user?.email}</span>
               </div>
               <a 
                 href={api.logoutUrl()} 
                 className="p-2 text-zinc-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-all border border-transparent hover:border-rose-500/20"
-                title="Log Out"
+                aria-label="Log Out"
               >
-                <LogOut className="h-5 w-5" />
+                <LogOut className="h-5 w-5" aria-hidden="true" />
               </a>
             </div>
           </header>
@@ -117,7 +117,7 @@ const RootLayout: React.FC = () => {
         </main>
         
         {!isLoginPage && (
-          <footer className="py-6 border-t border-zinc-900/80 text-center text-zinc-600 text-xs">
+          <footer className="py-6 border-t border-zinc-900/80 text-center text-zinc-400 text-xs">
             Booklet Studio &copy; {new Date().getFullYear()} &bull; SRE Instrumented &bull; Stateless Imposition
           </footer>
         )}

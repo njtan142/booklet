@@ -2,6 +2,7 @@ import React, { useState } from "react"
 import { api } from "../api"
 import { Button } from "./ui/button"
 import { Input } from "./ui/input"
+import { Label } from "./ui/label"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/tabs"
 import { BookOpen, Shield, Key } from "lucide-react"
 
@@ -22,22 +23,22 @@ export const Login: React.FC = () => {
       <div className="glass w-full max-w-md p-8 rounded-3xl border-zinc-800 space-y-6 shadow-2xl shadow-primary/10">
         <div className="flex flex-col items-center text-center gap-3">
           <div className="bg-primary p-3 rounded-2xl text-white shadow-xl shadow-primary/20 animate-bounce">
-            <BookOpen className="h-8 w-8" />
+            <BookOpen className="h-8 w-8" aria-hidden="true" />
           </div>
           <div>
-            <h2 className="text-2xl font-extrabold text-white tracking-tight m-0">Booklet Studio</h2>
-            <p className="text-zinc-500 text-xs mt-1.5 max-w-xs">Double-sided imposition, modular S3-compatible storage, pg_vector searches, and Prometheus observability.</p>
+            <h1 className="text-2xl font-extrabold text-white tracking-tight m-0">Booklet Studio</h1>
+            <p className="text-zinc-400 text-xs mt-1.5 max-w-xs">Double-sided imposition, modular S3-compatible storage, pg_vector searches, and Prometheus observability.</p>
           </div>
         </div>
 
         <Tabs defaultValue="oidc" className="w-full">
           <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="oidc" className="flex items-center gap-1.5 justify-center py-2.5">
-              <Shield className="h-4 w-4" />
+              <Shield className="h-4 w-4" aria-hidden="true" />
               OIDC Login
             </TabsTrigger>
             <TabsTrigger value="mock" className="flex items-center gap-1.5 justify-center py-2.5">
-              <Key className="h-4 w-4" />
+              <Key className="h-4 w-4" aria-hidden="true" />
               Developer Bypass
             </TabsTrigger>
           </TabsList>
@@ -50,7 +51,7 @@ export const Login: React.FC = () => {
               className="w-full py-6 font-bold flex items-center justify-center gap-2 mt-2"
               onClick={() => window.location.href = api.loginUrl()}
             >
-              <Shield className="h-4 w-4" />
+              <Shield className="h-4 w-4" aria-hidden="true" />
               Authenticate with OIDC
             </Button>
           </TabsContent>
@@ -62,8 +63,9 @@ export const Login: React.FC = () => {
             
             <form onSubmit={handleMockLogin} className="space-y-3.5 pt-2">
               <div className="space-y-1">
-                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Email Address</label>
+                <Label htmlFor="mock-email" className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Email Address</Label>
                 <Input 
+                  id="mock-email"
                   type="email" 
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -73,8 +75,9 @@ export const Login: React.FC = () => {
               </div>
 
               <div className="space-y-1">
-                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Display Name</label>
+                <Label htmlFor="mock-name" className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Display Name</Label>
                 <Input 
+                  id="mock-name"
                   type="text" 
                   value={name}
                   onChange={(e) => setName(e.target.value)}
@@ -84,7 +87,7 @@ export const Login: React.FC = () => {
               </div>
 
               <Button type="submit" variant="secondary" className="w-full py-6 font-bold flex items-center justify-center gap-2 mt-2 bg-zinc-900 border border-zinc-800 hover:bg-zinc-850 hover:border-zinc-700">
-                <Key className="h-4 w-4" />
+                <Key className="h-4 w-4" aria-hidden="true" />
                 Spawn Mock Session
               </Button>
             </form>

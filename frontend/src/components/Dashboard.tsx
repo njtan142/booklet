@@ -144,20 +144,22 @@ export const Dashboard: React.FC = () => {
           <h3 className="text-lg font-bold text-white m-0">Upload Document</h3>
           
           <div className="relative border-2 border-dashed border-zinc-800 rounded-xl p-8 flex flex-col items-center justify-center gap-2 hover:border-primary/50 transition-all bg-zinc-950/20 group">
-            <UploadCloud className="h-10 w-10 text-zinc-500 group-hover:text-primary transition-colors" />
+            <UploadCloud className="h-10 w-10 text-zinc-400 group-hover:text-primary transition-colors" aria-hidden="true" />
             <span className="text-zinc-400 text-xs font-medium">Drag & drop your PDF file or click to browse</span>
             <Input 
+              id="pdf-file-upload"
               type="file" 
               accept=".pdf" 
               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
               onChange={handleFileChange}
               disabled={uploadMutation.isPending}
+              aria-label="Upload PDF document"
             />
           </div>
 
           {uploadProgress && (
             <div className="flex items-center gap-2 text-xs text-zinc-400 bg-zinc-900/60 p-3 rounded-lg border border-zinc-800/80">
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" aria-hidden="true" />
               <span>{uploadProgress}</span>
             </div>
           )}
@@ -168,19 +170,21 @@ export const Dashboard: React.FC = () => {
 
           {loadingDocs ? (
             <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              <Loader2 className="h-6 w-6 animate-spin text-primary" aria-hidden="true" />
             </div>
           ) : documents.length === 0 ? (
-            <p className="text-zinc-500 text-xs text-center py-6">No documents uploaded yet.</p>
+            <p className="text-zinc-400 text-xs text-center py-6">No documents uploaded yet.</p>
           ) : (
             <div className="space-y-2.5 max-h-[400px] overflow-y-auto pr-2">
               {documents.map((doc) => {
                 const isSelected = selectedDocId === doc.id
                 return (
-                  <div 
+                  <button 
+                    type="button"
                     key={doc.id} 
                     onClick={() => doc.status === "ready" && setSelectedDocId(doc.id)}
-                    className={`p-3.5 rounded-xl border flex items-center justify-between gap-4 cursor-pointer transition-all ${
+                    disabled={doc.status !== "ready"}
+                    className={`w-full text-left p-3.5 rounded-xl border flex items-center justify-between gap-4 cursor-pointer transition-all ${
                       isSelected 
                         ? "bg-primary/10 border-primary/30" 
                         : doc.status === "processing" 
@@ -190,24 +194,24 @@ export const Dashboard: React.FC = () => {
                   >
                     <div className="flex items-center gap-3 min-w-0">
                       <div className={`p-2 rounded-lg ${isSelected ? "bg-primary/20 text-primary" : "bg-zinc-900 text-zinc-400"}`}>
-                        <FileText className="h-4 w-4" />
+                        <FileText className="h-4 w-4" aria-hidden="true" />
                       </div>
                       <div className="min-w-0">
                         <h4 className="text-xs font-bold text-white truncate m-0">{doc.name}</h4>
-                        <p className="text-[10px] text-zinc-500 mt-0.5">{doc.total_pages} pages</p>
+                        <p className="text-[10px] text-zinc-400 mt-0.5">{doc.total_pages} pages</p>
                       </div>
                     </div>
 
                     <div>
                       {doc.status === "processing" ? (
-                        <Loader2 className="h-4 w-4 animate-spin text-zinc-500" />
+                        <Loader2 className="h-4 w-4 animate-spin text-zinc-400" aria-hidden="true" />
                       ) : doc.status === "failed" ? (
-                        <AlertCircle className="h-4 w-4 text-rose-500" />
+                        <AlertCircle className="h-4 w-4 text-rose-550" aria-hidden="true" />
                       ) : (
-                        <FileCheck className="h-4 w-4 text-emerald-500" />
+                        <FileCheck className="h-4 w-4 text-emerald-500" aria-hidden="true" />
                       )}
                     </div>
-                  </div>
+                  </button>
                 )
               })}
             </div>
@@ -222,70 +226,72 @@ export const Dashboard: React.FC = () => {
             <div>
               <span className="text-[10px] uppercase font-bold text-primary tracking-wider">Document Details</span>
               <h2 className="text-xl font-extrabold text-white mt-1">{docDetail.name}</h2>
-              <p className="text-zinc-500 text-xs mt-1">Uploaded {new Date(docDetail.created_at).toLocaleDateString()}</p>
+              <p className="text-zinc-400 text-xs mt-1">Uploaded {new Date(docDetail.created_at).toLocaleDateString()}</p>
             </div>
 
             <div className="border-t border-zinc-800/80 pt-6 space-y-4">
               <div className="flex items-center gap-2">
-                <Settings className="h-5 w-5 text-zinc-400" />
+                <Settings className="h-5 w-5 text-zinc-400" aria-hidden="true" />
                 <h3 className="text-base font-bold text-white m-0">Booklet Imposition Config</h3>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold text-zinc-400">Outer Margins (Points)</Label>
+                  <Label htmlFor="margin-input" className="text-xs font-semibold text-zinc-450">Outer Margins (Points)</Label>
                   <Input 
+                    id="margin-input"
                     type="number" 
                     value={margin} 
                     onChange={(e) => setMargin(parseFloat(e.target.value) || 0)} 
                   />
-                  <p className="text-[10px] text-zinc-500">Spacing around page edges. 72pt = 1 inch.</p>
+                  <p className="text-[10px] text-zinc-400">Spacing around page edges. 72pt = 1 inch.</p>
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold text-zinc-400">Inner Gutter (Points)</Label>
+                  <Label htmlFor="gutter-input" className="text-xs font-semibold text-zinc-455">Inner Gutter (Points)</Label>
                   <Input 
+                    id="gutter-input"
                     type="number" 
                     value={gutter} 
                     onChange={(e) => setGutter(parseFloat(e.target.value) || 0)} 
                   />
-                  <p className="text-[10px] text-zinc-500">Spacing between side-by-side pages.</p>
+                  <p className="text-[10px] text-zinc-400">Spacing between side-by-side pages.</p>
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold text-zinc-400">Paper Format (Landscape)</Label>
-                  <Select value={paperSize} onChange={(e) => setPaperSize(e.target.value)}>
+                  <Label htmlFor="paper-size-select" className="text-xs font-semibold text-zinc-460">Paper Format (Landscape)</Label>
+                  <Select id="paper-size-select" value={paperSize} onChange={(e) => setPaperSize(e.target.value)}>
                     <option value="a4">A4 Landscape</option>
                     <option value="letter">Letter Landscape</option>
                   </Select>
-                  <p className="text-[10px] text-zinc-500">Dimensions of final booklet sheet.</p>
+                  <p className="text-[10px] text-zinc-400">Dimensions of final booklet sheet.</p>
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold text-zinc-400">Signature Size</Label>
-                  <Select value={signatureSize.toString()} onChange={(e) => setSignatureSize(parseInt(e.target.value))}>
+                  <Label htmlFor="signature-size-select" className="text-xs font-semibold text-zinc-465">Signature Size</Label>
+                  <Select id="signature-size-select" value={signatureSize.toString()} onChange={(e) => setSignatureSize(parseInt(e.target.value))}>
                     <option value="4">4 Pages (1 sheet)</option>
                     <option value="8">8 Pages (2 sheets)</option>
                     <option value="12">12 Pages (3 sheets)</option>
                     <option value="16">16 Pages (4 sheets)</option>
                   </Select>
-                  <p className="text-[10px] text-zinc-500">Grouping count for folding/binding.</p>
+                  <p className="text-[10px] text-zinc-400">Grouping count for folding/binding.</p>
                 </div>
               </div>
 
               {compiling && (
                 <div className="flex items-center gap-3 bg-zinc-950/80 p-4 rounded-xl border border-zinc-800">
-                  <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                  <Loader2 className="h-5 w-5 animate-spin text-primary" aria-hidden="true" />
                   <div className="text-xs">
                     <p className="font-bold text-white">Compiling Booklet...</p>
-                    <p className="text-zinc-500 mt-0.5">{compileStatus}</p>
+                    <p className="text-zinc-400 mt-0.5">{compileStatus}</p>
                   </div>
                 </div>
               )}
 
               {!compiling && compileStatus && (
                 <div className="p-4 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-xl text-xs flex items-center gap-2">
-                  <AlertCircle className="h-4 w-4" />
+                  <AlertCircle className="h-4 w-4" aria-hidden="true" />
                   <span>{compileStatus}</span>
                 </div>
               )}
@@ -296,7 +302,7 @@ export const Dashboard: React.FC = () => {
                   onClick={() => compileMutation.mutate(selectedDocId!)}
                   disabled={compiling}
                 >
-                  <Printer className="h-4 w-4" />
+                  <Printer className="h-4 w-4" aria-hidden="true" />
                   Compile &amp; Generate Booklet Layout
                 </Button>
               </div>
@@ -304,9 +310,9 @@ export const Dashboard: React.FC = () => {
           </div>
         ) : (
           <div className="glass h-[400px] rounded-2xl border-zinc-800 flex flex-col items-center justify-center text-center p-6">
-            <FileText className="h-16 w-16 text-zinc-700 animate-pulse" />
+            <FileText className="h-16 w-16 text-zinc-400 animate-pulse" aria-hidden="true" />
             <h3 className="text-base font-bold text-white mt-4">No Document Selected</h3>
-            <p className="text-zinc-500 text-xs mt-1.5 max-w-xs leading-relaxed">
+            <p className="text-zinc-400 text-xs mt-1.5 max-w-xs leading-relaxed">
               Select an uploaded document from the library panel or drop a new PDF file to configure your booklet imposition parameters.
             </p>
           </div>

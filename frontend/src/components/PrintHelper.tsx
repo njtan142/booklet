@@ -92,19 +92,19 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
       {/* Overview stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="glass p-4 rounded-xl border-zinc-800">
-          <p className="text-zinc-500 text-xs font-semibold uppercase tracking-wider">Original Pages</p>
+          <p className="text-zinc-400 text-xs font-semibold uppercase tracking-wider">Original Pages</p>
           <p className="text-2xl font-extrabold text-white mt-1">{totalPages}</p>
         </div>
         <div className="glass p-4 rounded-xl border-zinc-800">
-          <p className="text-zinc-500 text-xs font-semibold uppercase tracking-wider">Padded Booklet Pages</p>
+          <p className="text-zinc-400 text-xs font-semibold uppercase tracking-wider">Padded Booklet Pages</p>
           <p className="text-2xl font-extrabold text-violet-400 mt-1">{targetPages}</p>
         </div>
         <div className="glass p-4 rounded-xl border-zinc-800">
-          <p className="text-zinc-500 text-xs font-semibold uppercase tracking-wider">Total Sheets of Paper</p>
+          <p className="text-zinc-400 text-xs font-semibold uppercase tracking-wider">Total Sheets of Paper</p>
           <p className="text-2xl font-extrabold text-blue-400 mt-1">{totalSheets}</p>
         </div>
         <div className="glass p-4 rounded-xl border-zinc-800">
-          <p className="text-zinc-500 text-xs font-semibold uppercase tracking-wider">Estimated Signatures</p>
+          <p className="text-zinc-400 text-xs font-semibold uppercase tracking-wider">Estimated Signatures</p>
           <p className="text-2xl font-extrabold text-emerald-400 mt-1">{targetPages / 4}</p>
         </div>
       </div>
@@ -115,13 +115,14 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
           <div className="glass p-6 rounded-2xl border-zinc-800 space-y-4">
             <div className="flex items-center justify-between border-b border-zinc-800/80 pb-4">
               <div className="flex items-center gap-2">
-                <Printer className="h-5 w-5 text-primary" />
+                <Printer className="h-5 w-5 text-primary" aria-hidden="true" />
                 <h3 className="text-lg font-bold text-white m-0">Batch Printing Console</h3>
               </div>
               <div className="flex items-center gap-3">
-                <span className="text-zinc-400 text-xs font-medium">Batch size:</span>
+                <Label htmlFor="batch-size-select" className="text-zinc-400 text-xs font-medium">Batch size:</Label>
                 <div className="w-24">
                   <Select 
+                    id="batch-size-select"
                     value={batchSize.toString()} 
                     onChange={(e) => {
                       setBatchSize(parseInt(e.target.value))
@@ -165,7 +166,7 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
                           Sheets {batch.startSheet} &ndash; {batch.endSheet}
                         </h4>
                       </div>
-                      <p className="text-zinc-500 text-xs">
+                      <p className="text-zinc-400 text-xs">
                         Prints booklet pages {2 * batch.startSheet - 1} to {2 * batch.endSheet}
                       </p>
                     </div>
@@ -177,7 +178,7 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
                         onClick={() => window.open(api.getDownloadUrl(bookletId, "fronts", `${batch.startSheet}-${batch.endSheet}`), "_blank")}
                         disabled={isDone}
                       >
-                        <FileDown className="mr-1.5 h-3.5 w-3.5" />
+                        <FileDown className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
                         1. Fronts (Odds)
                       </Button>
                       <Button 
@@ -186,7 +187,7 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
                         onClick={() => window.open(api.getDownloadUrl(bookletId, "backs", `${batch.startSheet}-${batch.endSheet}`), "_blank")}
                         disabled={isDone}
                       >
-                        <FileDown className="mr-1.5 h-3.5 w-3.5" />
+                        <FileDown className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
                         2. Backs (Evens)
                       </Button>
                       <Button 
@@ -195,11 +196,12 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
                         className={`p-2 rounded-lg border transition-all cursor-pointer ${
                           isDone 
                             ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20" 
-                            : "bg-zinc-900 border-zinc-800 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
+                            : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-300 hover:bg-zinc-800"
                         }`}
-                        title={isDone ? "Mark Incomplete" : "Mark Complete"}
+                        aria-label={isDone ? `Mark batch ${batch.id} incomplete` : `Mark batch ${batch.id} complete`}
+                        aria-pressed={isDone}
                       >
-                        <CheckCircle2 className="h-4 w-4" />
+                        <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
                       </Button>
                     </div>
                   </div>
@@ -211,7 +213,7 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
           {/* Guide Card */}
           <div className="glass p-6 rounded-2xl border-zinc-800 space-y-4">
             <div className="flex items-center gap-2 border-b border-zinc-800/80 pb-4">
-              <HelpCircle className="h-5 w-5 text-blue-400" />
+              <HelpCircle className="h-5 w-5 text-blue-400" aria-hidden="true" />
               <h3 className="text-lg font-bold text-white m-0">How to Manual Duplex Print</h3>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs text-zinc-300">
@@ -235,7 +237,7 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
         <div className="space-y-6">
           <div className="glass p-6 rounded-2xl border-zinc-800 space-y-4">
             <div className="flex items-center gap-2 border-b border-zinc-800/80 pb-4">
-              <AlertTriangle className="h-5 w-5 text-rose-500" />
+              <AlertTriangle className="h-5 w-5 text-rose-500" aria-hidden="true" />
               <h3 className="text-lg font-bold text-white m-0">Ruined Print Recovery</h3>
             </div>
             <p className="text-zinc-400 text-xs leading-relaxed">
@@ -248,8 +250,9 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
             <div className="space-y-3 pt-2">
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <Label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Start Page #</Label>
+                  <Label htmlFor="ruined-start-input" className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Start Page #</Label>
                   <Input 
+                    id="ruined-start-input"
                     type="number" 
                     min="1" 
                     max={targetPages}
@@ -259,8 +262,9 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">End Page # (Opt)</Label>
+                  <Label htmlFor="ruined-end-input" className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">End Page # (Opt)</Label>
                   <Input 
+                    id="ruined-end-input"
                     type="number" 
                     min="1" 
                     max={targetPages}
@@ -281,7 +285,7 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
                   className="w-full flex items-center justify-center gap-2"
                   onClick={() => handleDownloadRecovery("fronts")}
                 >
-                  <RotateCw className="h-4 w-4" />
+                  <RotateCw className="h-4 w-4" aria-hidden="true" />
                   Reprint Ruined Fronts
                 </Button>
                 <Button 
@@ -289,7 +293,7 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
                   className="w-full flex items-center justify-center gap-2"
                   onClick={() => handleDownloadRecovery("backs")}
                 >
-                  <RotateCw className="h-4 w-4" />
+                  <RotateCw className="h-4 w-4" aria-hidden="true" />
                   Reprint Ruined Backs
                 </Button>
                 <Button 
@@ -297,7 +301,7 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
                   className="w-full text-zinc-300 border-zinc-800 hover:bg-zinc-900"
                   onClick={() => handleDownloadRecovery("both")}
                 >
-                  <RefreshCw className="h-4 w-4" />
+                  <RefreshCw className="h-4 w-4" aria-hidden="true" />
                   Reprint Both (Full Sheets)
                 </Button>
               </div>
