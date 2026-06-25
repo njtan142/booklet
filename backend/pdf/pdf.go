@@ -35,17 +35,17 @@ type BookletConfig struct {
 
 // SplitDocument splits the uploaded PDF into single-page PDFs, extracts text and page dimensions
 func SplitDocument(ctx context.Context, docID string, localPath string) ([]PageInfo, error) {
-	// Create a temp directory for splits
-	tempDir, err := os.MkdirTemp("", "booklet-split-*")
-	if err != nil {
+	// Create a temp directory for splits inside the parent directory of localPath
+	// so that it gets cleaned up when the caller cleans up the parent directory.
+	tempDir := filepath.Join(filepath.Dir(localPath), "split")
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create temp dir: %w", err)
 	}
-	defer os.RemoveAll(tempDir)
 
 	log.Printf("Splitting document %s in %s...", localPath, tempDir)
 
 	// pdfcpu Split splits the file into parts of size 1 page
-	err = api.SplitFile(localPath, tempDir, 1, nil)
+	err := api.SplitFile(localPath, tempDir, 1, nil)
 	if err != nil {
 		return nil, fmt.Errorf("pdfcpu split failed: %w", err)
 	}
@@ -121,10 +121,27 @@ func SplitDocument(ctx context.Context, docID string, localPath string) ([]PageI
 	return pages, nil
 }
 
-func processSinglePage(filePath string) (string, float64, float64, error) {
+func processSinglePage(filePath string) (text string, width float64, height float64, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic while processing page %s: %v", filePath, r)
+		}
+	}()
+
 	// 1. Open PDF to extract dimensions
 	// We can use dslipak/pdf reader
-	r, err := pdf.Open(filePath)
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	defer file.Close()
+
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return "", 0, 0, err
+	}
+
+	r, err := pdf.NewReader(file, fileInfo.Size())
 	if err != nil {
 		return "", 0, 0, err
 	}
@@ -138,33 +155,7 @@ func processSinglePage(filePath string) (string, float64, float64, error) {
 		return "", 0, 0, fmt.Errorf("invalid page object")
 	}
 
-	// Extract page box dimensions
-	// MediaBox is standard, but check crop box if needed.
-	// In dslipak/pdf, page properties can be read from its dictionary or resources.
-	// If direct dimension methods aren't available, gofpdi / gopdf can read page size.
-	// Let's use a simple gofpdi template reader or default values.
-	// Actually, we can get page dimensions using a quick helper from gofpdi!
-	// Let's check: gofpdi has a package that reads dimensions from PDF files.
-	// We can construct a gopdf template, check the template size, or read it directly.
-	// Let's read size using a quick gopdf template initialization!
-	pdfObj := gopdf.GoPdf{}
-	pdfObj.Start(gopdf.Config{PageSize: gopdf.Rect{W: 595.28, H: 841.89}})
-	pdfObj.AddPage()
-	_ = pdfObj.ImportPage(filePath, 1, "/MediaBox")
-	
-	// In gopdf/gofpdi, ImportPage imports the page and we can read its dimensions:
-	// Let's check if we can get the dimensions from gofpdi.
-	// Actually, gofpdi provides GetPageSizes(filePath) which returns map of page sizes!
-	// Let's check if we can import page and query its scale.
-	// Wait, we can get dimensions by calling gofpdi's raw reader:
-	// Since gofpdi is imported by gopdf, we can just use gofpdi.GetPageSizes(filePath)!
-	// Let's write a small helper to get page dimensions.
-	// We can do it using pdfcpu or gofpdi.
-	// Let's use pdfcpu's API to inspect the page or gofpdi.
-	// Actually, pdfcpu has api.PageDims(filePath) which returns slice of dimensions!
-	// Let's check if we can get dimensions from pdfcpu:
 	dims, err := api.PageDimsFile(filePath)
-	var width, height float64
 	if err == nil && len(dims) > 0 {
 		width = dims[0].Width
 		height = dims[0].Height

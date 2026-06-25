@@ -23,6 +23,11 @@ func main() {
 		log.Fatalf("Fatal: Database initialization failed: %v", err)
 	}
 
+	// 1b. Clean up any stale background processes from a previous crash/shutdown
+	if err := db.FailStaleProcessingDocuments(); err != nil {
+		log.Printf("Warning: Failed to clean up stale processes: %v", err)
+	}
+
 	// 2. Initialize MinIO Object Storage
 	if err := storage.InitStorage(); err != nil {
 		log.Fatalf("Fatal: MinIO storage initialization failed: %v", err)
@@ -56,6 +61,7 @@ func main() {
 	// Document Management routes (require authentication middleware)
 	mux.Handle("/api/documents", auth.RequireAuth(http.HandlerFunc(handlers.HandleListDocuments)))
 	mux.Handle("/api/documents/{id}", auth.RequireAuth(http.HandlerFunc(handlers.HandleGetDocument)))
+	mux.Handle("/api/documents/{id}/dismiss", auth.RequireAuth(http.HandlerFunc(handlers.HandleDismissDocument)))
 	mux.Handle("/api/documents/upload", auth.RequireAuth(http.HandlerFunc(handlers.HandleUploadDocument)))
 
 	// Booklet Compilation routes (require authentication middleware)

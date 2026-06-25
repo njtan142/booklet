@@ -1,6 +1,10 @@
 package pdf
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -87,5 +91,58 @@ func TestMapPagesToSheets_S8_N8(t *testing.T) {
 	if startSheet != 1 || endSheet != 2 {
 		t.Errorf("Expected pages 6-7 to map to Sheets 1-2, got Sheets %d-%d", startSheet, endSheet)
 	}
+}
+
+func TestProcessSinglePage_ProcessesGeneratedPDF(t *testing.T) {
+	tempDir := t.TempDir()
+	inputPath := filepath.Join(tempDir, "input.pdf")
+
+	if err := writeMinimalTestPDF(inputPath); err != nil {
+		t.Fatalf("failed to write test PDF: %v", err)
+	}
+
+	text, width, height, err := processSinglePage(inputPath)
+	if err != nil {
+		t.Fatalf("processSinglePage returned error: %v", err)
+	}
+
+	if strings.ReplaceAll(text, " ", "") != "Hello" {
+		t.Fatalf("expected extracted text to normalize to %q, got %q", "Hello", text)
+	}
+
+	if width <= 0 || height <= 0 {
+		t.Fatalf("expected positive page dimensions, got %.2f x %.2f", width, height)
+	}
+
+	if _, err := os.Stat(inputPath); err != nil {
+		t.Fatalf("expected test PDF to exist, stat err=%v", err)
+	}
+}
+
+func writeMinimalTestPDF(path string) error {
+	var builder strings.Builder
+	objectOffsets := make([]int, 0, 6)
+
+	writeObject := func(content string) {
+		objectOffsets = append(objectOffsets, builder.Len())
+		builder.WriteString(content)
+	}
+
+	builder.WriteString("%PDF-1.4\n")
+	writeObject("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n")
+	writeObject("2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n")
+	writeObject("3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 300] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n")
+	writeObject("4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n")
+	stream := "BT /F1 12 Tf 72 150 Td (Hello) Tj ET\n"
+	writeObject(fmt.Sprintf("5 0 obj\n<< /Length %d >>\nstream\n%sendstream\nendobj\n", len(stream), stream))
+
+	xrefStart := builder.Len()
+	builder.WriteString("xref\n0 6\n0000000000 65535 f \n")
+	for i := 0; i < 5; i++ {
+		builder.WriteString(fmt.Sprintf("%010d 00000 n \n", objectOffsets[i]))
+	}
+	builder.WriteString(fmt.Sprintf("trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", xrefStart))
+
+	return os.WriteFile(path, []byte(builder.String()), 0644)
 }
 

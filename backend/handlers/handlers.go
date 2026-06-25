@@ -75,7 +75,7 @@ func HandleListDocuments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := db.DB.Query(`SELECT id, name, total_pages, status, created_at FROM documents ORDER BY created_at DESC`)
+	rows, err := db.DB.Query(`SELECT id, name, total_pages, status, created_at FROM documents WHERE is_dismissed = FALSE ORDER BY created_at DESC`)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -108,6 +108,27 @@ type DocumentPageDetail struct {
 type DocumentDetailResponse struct {
 	DocumentResponse
 	Pages []DocumentPageDetail `json:"pages"`
+}
+
+func HandleDismissDocument(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	docID := r.PathValue("id")
+	if _, err := uuid.Parse(docID); err != nil {
+		http.Error(w, "invalid UUID format", http.StatusBadRequest)
+		return
+	}
+
+	_, err := db.DB.Exec(`UPDATE documents SET is_dismissed = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = $1`, docID)
+	if err != nil {
+		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func HandleGetDocument(w http.ResponseWriter, r *http.Request) {
@@ -239,6 +260,13 @@ func HandleUploadDocument(w http.ResponseWriter, r *http.Request) {
 
 func runBackgroundDocumentProcessing(docID uuid.UUID, localPath string, tempDir string) {
 	defer os.RemoveAll(tempDir)
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			log.Printf("panic: background processing crashed for document %s: %v", docID, recovered)
+			updateDocStatus(docID, "failed")
+			metrics.DocumentUploadsTotal.With(prometheus.Labels{"status": "failed"}).Inc()
+		}
+	}()
 
 	ctx := context.Background()
 	log.Printf("Background processing started for document: %s (%s)", localPath, docID)

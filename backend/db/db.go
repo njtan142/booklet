@@ -82,6 +82,7 @@ func runMigrations() error {
 			name TEXT NOT NULL,
 			total_pages INT NOT NULL,
 			status TEXT NOT NULL,
+			is_dismissed BOOLEAN DEFAULT FALSE,
 			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 		);
@@ -89,6 +90,9 @@ func runMigrations() error {
 	if err != nil {
 		return err
 	}
+
+	// Add is_dismissed column if it doesn't exist for compatibility
+	_, _ = DB.Exec(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS is_dismissed BOOLEAN DEFAULT FALSE;`)
 
 	// 3. Document Pages Table (using 384 dimensions for all-minilm embeddings by default)
 	log.Println("Creating document_pages table...")
@@ -156,3 +160,39 @@ func Float32ArrayToString(slice []float32) string {
 	}
 	return "[" + strings.Join(strVals, ",") + "]"
 }
+
+// FailStaleProcessingDocuments marks all documents in 'processing' status and compiled booklets in 'compiling' status as 'failed'.
+func FailStaleProcessingDocuments() error {
+	log.Println("Cleaning up stale background processes from database...")
+	
+	// Fail stale documents
+	res, err := DB.Exec(`
+		UPDATE documents 
+		SET status = 'failed', updated_at = CURRENT_TIMESTAMP 
+		WHERE status = 'processing'
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to clean up stale documents: %w", err)
+	}
+	docCount, _ := res.RowsAffected()
+	if docCount > 0 {
+		log.Printf("Marked %d stale processing documents as failed.", docCount)
+	}
+
+	// Fail stale compiled booklets
+	res, err = DB.Exec(`
+		UPDATE compiled_booklets 
+		SET status = 'failed' 
+		WHERE status = 'compiling'
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to clean up stale compiled booklets: %w", err)
+	}
+	bookletCount, _ := res.RowsAffected()
+	if bookletCount > 0 {
+		log.Printf("Marked %d stale compiling booklets as failed.", bookletCount)
+	}
+
+	return nil
+}
+
