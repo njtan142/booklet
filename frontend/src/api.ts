@@ -76,6 +76,7 @@ export const api = {
   getMe: () => apiFetch<AuthStatus>("/auth/me"),
   logoutUrl: () => `http://localhost:8080/api/auth/logout`,
   loginUrl: () => `http://localhost:8080/api/auth/login`,
+  devLoginUrl: () => `http://localhost:8080/api/auth/dev/login`,
 
   // Documents
   listDocuments: () => apiFetch<DocumentInfo[]>("/documents"),

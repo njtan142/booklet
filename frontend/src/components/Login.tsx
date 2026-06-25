@@ -93,13 +93,16 @@ const GitLabLogo: React.FC = () => (
 )
 
 export const Login: React.FC = () => {
+  // Show the Developer Bypass tab when running via the Vite dev server,
+  // OR when the bundle was built with VITE_DEV_BYPASS_ENABLED=true (Docker dev).
+  const isDev = import.meta.env.DEV || import.meta.env.VITE_DEV_BYPASS_ENABLED === "true"
   const [email, setEmail] = useState<string>("dev@example.com")
   const [name, setName] = useState<string>("Developer User")
 
   const handleMockLogin = (e: React.FormEvent) => {
     e.preventDefault()
     if (email) {
-      const loginUrl = `${api.loginUrl()}?email=${encodeURIComponent(email)}&name=${encodeURIComponent(name)}`
+      const loginUrl = `${api.devLoginUrl()}?email=${encodeURIComponent(email)}&name=${encodeURIComponent(name)}`
       window.location.href = loginUrl
     }
   }
@@ -297,7 +300,7 @@ export const Login: React.FC = () => {
           <Tabs defaultValue="oidc" className="w-full">
             
             {/* Custom styled tabs headers matching the pill style */}
-            <TabsList className="grid w-full grid-cols-2 bg-zinc-950/45 border border-zinc-800/80 rounded-2xl p-1 h-auto mb-6">
+            <TabsList className={`grid w-full ${isDev ? "grid-cols-2" : "grid-cols-1"} bg-zinc-950/45 border border-zinc-800/80 rounded-2xl p-1 h-auto mb-6`}>
               <TabsTrigger 
                 value="oidc" 
                 className="flex items-center gap-2 justify-center py-2.5 rounded-xl font-bold text-xs text-zinc-400 data-[state=active]:bg-zinc-900 data-[state=active]:border-zinc-700/60 data-[state=active]:text-white transition-all border border-transparent"
@@ -305,13 +308,15 @@ export const Login: React.FC = () => {
                 <Shield className="h-4 w-4" aria-hidden="true" />
                 OIDC Login
               </TabsTrigger>
-              <TabsTrigger 
-                value="mock" 
-                className="flex items-center gap-2 justify-center py-2.5 rounded-xl font-bold text-xs text-zinc-400 data-[state=active]:bg-zinc-900 data-[state=active]:border-zinc-700/60 data-[state=active]:text-white transition-all border border-transparent"
-              >
-                <Key className="h-4 w-4" aria-hidden="true" />
-                Developer Bypass
-              </TabsTrigger>
+              {isDev && (
+                <TabsTrigger 
+                  value="mock" 
+                  className="flex items-center gap-2 justify-center py-2.5 rounded-xl font-bold text-xs text-zinc-400 data-[state=active]:bg-zinc-900 data-[state=active]:border-zinc-700/60 data-[state=active]:text-white transition-all border border-transparent"
+                >
+                  <Key className="h-4 w-4" aria-hidden="true" />
+                  Developer Bypass
+                </TabsTrigger>
+              )}
             </TabsList>
 
             {/* OIDC Authentication Tab */}
@@ -363,48 +368,50 @@ export const Login: React.FC = () => {
               </Button>
             </TabsContent>
 
-            {/* Developer Local Bypass Tab */}
-            <TabsContent value="mock" className="space-y-6 pt-2 focus-visible:outline-none">
-              <p className="text-zinc-400 text-xs text-center leading-relaxed max-w-sm mx-auto">
-                Bypass authentication locally using a mock profile. This generates a valid JWT session key signed by the backend.
-              </p>
-              
-              <form onSubmit={handleMockLogin} className="space-y-4 pt-1">
-                <div className="space-y-1.5">
-                  <Label htmlFor="mock-email" className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Email Address</Label>
-                  <Input 
-                    id="mock-email"
-                    type="email" 
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="e.g. dev@example.com"
-                    required
-                    className="bg-zinc-900/40 border-zinc-800 focus:border-violet-500/50 focus:ring-violet-500/20 rounded-xl h-11 text-zinc-200"
-                  />
-                </div>
+            {/* Developer Local Bypass Tab — only rendered in development mode */}
+            {isDev && (
+              <TabsContent value="mock" className="space-y-6 pt-2 focus-visible:outline-none">
+                <p className="text-zinc-400 text-xs text-center leading-relaxed max-w-sm mx-auto">
+                  Bypass authentication locally using a mock profile. This generates a valid JWT session key signed by the backend.
+                </p>
+                
+                <form onSubmit={handleMockLogin} className="space-y-4 pt-1">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="mock-email" className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Email Address</Label>
+                    <Input 
+                      id="mock-email"
+                      type="email" 
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="e.g. dev@example.com"
+                      required
+                      className="bg-zinc-900/40 border-zinc-800 focus:border-violet-500/50 focus:ring-violet-500/20 rounded-xl h-11 text-zinc-200"
+                    />
+                  </div>
 
-                <div className="space-y-1.5">
-                  <Label htmlFor="mock-name" className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Display Name</Label>
-                  <Input 
-                    id="mock-name"
-                    type="text" 
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="e.g. Developer User"
-                    required
-                    className="bg-zinc-900/40 border-zinc-800 focus:border-violet-500/50 focus:ring-violet-500/20 rounded-xl h-11 text-zinc-200"
-                  />
-                </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="mock-name" className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Display Name</Label>
+                    <Input 
+                      id="mock-name"
+                      type="text" 
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      placeholder="e.g. Developer User"
+                      required
+                      className="bg-zinc-900/40 border-zinc-800 focus:border-violet-500/50 focus:ring-violet-500/20 rounded-xl h-11 text-zinc-200"
+                    />
+                  </div>
 
-                <Button 
-                  type="submit" 
-                  className="w-full py-6 rounded-2xl font-bold flex items-center justify-center gap-2 mt-4 bg-zinc-900 border border-zinc-800 hover:bg-zinc-850 hover:border-zinc-700 hover:text-white transition-all text-zinc-300"
-                >
-                  <Key className="h-4.5 w-4.5" aria-hidden="true" />
-                  Spawn Mock Session
-                </Button>
-              </form>
-            </TabsContent>
+                  <Button 
+                    type="submit" 
+                    className="w-full py-6 rounded-2xl font-bold flex items-center justify-center gap-2 mt-4 bg-zinc-900 border border-zinc-800 hover:bg-zinc-850 hover:border-zinc-700 hover:text-white transition-all text-zinc-300"
+                  >
+                    <Key className="h-4.5 w-4.5" aria-hidden="true" />
+                    Start Dev Session
+                  </Button>
+                </form>
+              </TabsContent>
+            )}
           </Tabs>
 
         </Card>
