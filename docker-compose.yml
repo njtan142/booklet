@@ -78,6 +78,7 @@ services:
       - "8080:8080"
     environment:
       - PORT=8080
+      - APP_ENV=development # Remove or change to 'production' in non-development deployments
       - DATABASE_URL=postgres://postgres:postgres@db:5432/booklet?sslmode=disable
       - MINIO_ENDPOINT=minio:9000
       - MINIO_ACCESS_KEY=minioadmin
@@ -99,6 +100,10 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        # Must mirror APP_ENV on the backend: set to true when APP_ENV=development,
+        # remove or set to false for production deployments.
+        VITE_DEV_BYPASS_ENABLED: "true"
     container_name: booklet-frontend
     ports:
       - "80:80"

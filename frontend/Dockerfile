@@ -7,6 +7,13 @@ COPY package*.json ./
 RUN npm install
 
 COPY . .
+
+# Accept the bypass flag as a build-time argument.
+# Vite bakes VITE_* vars into the bundle at build time, so this must be
+# set before `npm run build` runs — it cannot be changed at container runtime.
+ARG VITE_DEV_BYPASS_ENABLED=false
+ENV VITE_DEV_BYPASS_ENABLED=$VITE_DEV_BYPASS_ENABLED
+
 RUN npm run build
 
 # Stage 2: Serve using Nginx
