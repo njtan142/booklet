@@ -82,7 +82,7 @@ func HandleListDocuments(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	var docs []DocumentResponse
+	docs := []DocumentResponse{}
 	for rows.Next() {
 		var d DocumentResponse
 		var id string
@@ -672,7 +672,7 @@ func HandleSemanticSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	var results []SearchResult
+	results := []SearchResult{}
 	for rows.Next() {
 		var r SearchResult
 		var docID string
