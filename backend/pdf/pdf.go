@@ -15,6 +15,7 @@ import (
 	"github.com/dslipak/pdf"
 	"github.com/google/uuid"
 	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/signintech/gopdf"
 )
 
@@ -44,8 +45,13 @@ func SplitDocument(ctx context.Context, docID string, localPath string) ([]PageI
 
 	log.Printf("Splitting document %s in %s...", localPath, tempDir)
 
-	// pdfcpu Split splits the file into parts of size 1 page
-	err := api.SplitFile(localPath, tempDir, 1, nil)
+	// pdfcpu Split splits the file into parts of size 1 page.
+	// We disable object streams and xref streams to ensure compatibility with gofpdi.
+	conf := model.NewDefaultConfiguration()
+	conf.WriteObjectStream = false
+	conf.WriteXRefStream = false
+
+	err := api.SplitFile(localPath, tempDir, 1, conf)
 	if err != nil {
 		return nil, fmt.Errorf("pdfcpu split failed: %w", err)
 	}
