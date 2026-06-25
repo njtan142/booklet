@@ -1,0 +1,53 @@
+# Compiled Go Binaries
+backend/booklet-backend
+backend/*.exe
+backend/*.exe~
+backend/*.dll
+backend/*.so
+backend/*.dylib
+backend/temp_filtered/
+backend/temp_compile/
+
+# Go Test Outputs
+*.test
+*.out
+*.prof
+
+# Node / JS Dependencies & Builds
+node_modules/
+dist/
+build/
+.npm
+.eslintcache
+.stylelintcache
+*.log
+
+# Playwright E2E Test Reports
+playwright-report/
+test-results/
+e2e/node_modules/
+
+# Environment Variables
+.env
+.env.local
+.env.*.local
+*.env
+
+# IDE / Editors
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS Files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Docker / Logs
+*.log
+docker-compose.override.yml

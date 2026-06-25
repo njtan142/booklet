@@ -1,0 +1,12 @@
+{
+  "name": "booklet-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "typescript": "^5.0.0"
+  },
+  "scripts": {
+    "test": "playwright test"
+  }
+}
