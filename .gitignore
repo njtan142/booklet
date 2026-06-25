@@ -51,3 +51,7 @@ Desktop.ini
 # Docker / Logs
 *.log
 docker-compose.override.yml
+
+
+# Shadcn Doctor
+.shadcn-doctor-cache.json
