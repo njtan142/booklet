@@ -14,6 +14,9 @@ COPY . .
 ARG VITE_DEV_BYPASS_ENABLED=false
 ENV VITE_DEV_BYPASS_ENABLED=$VITE_DEV_BYPASS_ENABLED
 
+ARG APP_ENV=production
+ENV APP_ENV=$APP_ENV
+
 RUN npm run build
 
 # Stage 2: Serve using Nginx

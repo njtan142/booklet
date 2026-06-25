@@ -111,6 +111,7 @@ services:
         # Must mirror APP_ENV on the backend: set to true when APP_ENV=development,
         # remove or set to false for production deployments.
         VITE_DEV_BYPASS_ENABLED: "true"
+        APP_ENV: "development"
     container_name: booklet-frontend
     ports:
       - "80:80"
