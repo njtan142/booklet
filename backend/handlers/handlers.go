@@ -77,7 +77,8 @@ func HandleListDocuments(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := db.DB.Query(`SELECT id, name, total_pages, status, created_at FROM documents WHERE is_dismissed = FALSE ORDER BY created_at DESC`)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("Error: failed to query documents list: %v", err)
+		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
@@ -87,7 +88,8 @@ func HandleListDocuments(w http.ResponseWriter, r *http.Request) {
 		var d DocumentResponse
 		var id string
 		if err := rows.Scan(&id, &d.Name, &d.TotalPages, &d.Status, &d.CreatedAt); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("Error: failed to scan document row: %v", err)
+			http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		d.ID = id
@@ -124,10 +126,12 @@ func HandleDismissDocument(w http.ResponseWriter, r *http.Request) {
 
 	_, err := db.DB.Exec(`UPDATE documents SET is_dismissed = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = $1`, docID)
 	if err != nil {
+		log.Printf("Error: failed to dismiss document %s: %v", docID, err)
 		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	log.Printf("Document %s dismissed successfully", docID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -150,10 +154,12 @@ func HandleGetDocument(w http.ResponseWriter, r *http.Request) {
 		FROM documents WHERE id = $1`, docID).Scan(&id, &d.Name, &d.TotalPages, &d.Status, &d.CreatedAt)
 	
 	if err == sql.ErrNoRows {
+		log.Printf("GetDocument: document %s not found", docID)
 		http.Error(w, "document not found", http.StatusNotFound)
 		return
 	} else if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("Error: failed to query document %s: %v", docID, err)
+		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	d.ID = id
@@ -166,7 +172,8 @@ func HandleGetDocument(w http.ResponseWriter, r *http.Request) {
 		ORDER BY page_number ASC`, docID)
 	
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("Error: failed to query pages for document %s: %v", docID, err)
+		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
@@ -175,7 +182,8 @@ func HandleGetDocument(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var p DocumentPageDetail
 		if err := rows.Scan(&p.PageNumber, &p.Text, &p.Width, &p.Height); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("Error: failed to scan page row for document %s: %v", docID, err)
+			http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		// Truncate preview text
@@ -198,12 +206,14 @@ func HandleUploadDocument(w http.ResponseWriter, r *http.Request) {
 
 	// 32 MB max memory for parsing form
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		log.Printf("Error: failed to parse multipart form for upload: %v", err)
 		http.Error(w, "failed to parse multipart form", http.StatusBadRequest)
 		return
 	}
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
+		log.Printf("Error: missing file in upload request: %v", err)
 		http.Error(w, "missing file in form-data", http.StatusBadRequest)
 		return
 	}
@@ -214,6 +224,7 @@ func HandleUploadDocument(w http.ResponseWriter, r *http.Request) {
 	// Create local temp file to inspect PDF page count and perform split
 	tempDir, err := os.MkdirTemp("", "booklet-upload-*")
 	if err != nil {
+		log.Printf("Error: failed to create temp dir for upload: %v", err)
 		http.Error(w, "failed to create temp dir", http.StatusInternalServerError)
 		return
 	}
@@ -222,12 +233,16 @@ func HandleUploadDocument(w http.ResponseWriter, r *http.Request) {
 	localPath := filepath.Join(tempDir, header.Filename)
 	outField, err := os.Create(localPath)
 	if err != nil {
+		os.RemoveAll(tempDir)
+		log.Printf("Error: failed to create temp file %s: %v", localPath, err)
 		http.Error(w, "failed to create temp file", http.StatusInternalServerError)
 		return
 	}
 	
 	if _, err := io.Copy(outField, file); err != nil {
 		outField.Close()
+		os.RemoveAll(tempDir)
+		log.Printf("Error: failed to save uploaded file to %s: %v", localPath, err)
 		http.Error(w, "failed to save uploaded file", http.StatusInternalServerError)
 		return
 	}
@@ -241,6 +256,7 @@ func HandleUploadDocument(w http.ResponseWriter, r *http.Request) {
 	
 	if err != nil {
 		os.RemoveAll(tempDir)
+		log.Printf("Error: failed to insert document %s metadata into database: %v", docID, err)
 		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -368,6 +384,7 @@ func HandleCompileBooklet(w http.ResponseWriter, r *http.Request) {
 
 	var req BookletCompileRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("Error: failed to decode booklet compile request JSON: %v", err)
 		http.Error(w, "invalid JSON payload", http.StatusBadRequest)
 		return
 	}
@@ -390,14 +407,17 @@ func HandleCompileBooklet(w http.ResponseWriter, r *http.Request) {
 	var docStatus string
 	err := db.DB.QueryRow(`SELECT status FROM documents WHERE id = $1`, docID).Scan(&docStatus)
 	if err == sql.ErrNoRows {
+		log.Printf("CompileBooklet: document %s not found", docID)
 		http.Error(w, "document not found", http.StatusNotFound)
 		return
 	} else if err != nil {
+		log.Printf("Error: failed to check status for document %s during compile: %v", docID, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	if docStatus != "ready" {
+		log.Printf("CompileBooklet: document %s is in status '%s', not ready", docID, docStatus)
 		http.Error(w, "document is not ready for booklet compilation", http.StatusConflict)
 		return
 	}
@@ -409,6 +429,7 @@ func HandleCompileBooklet(w http.ResponseWriter, r *http.Request) {
 		bookletID, docID, "compiling", req.Margin, req.Gutter, req.PaperSize, req.SignatureSize)
 	
 	if err != nil {
+		log.Printf("Error: failed to insert compiled booklet %s for document %s: %v", bookletID, docID, err)
 		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -503,9 +524,11 @@ func HandleGetBooklet(w http.ResponseWriter, r *http.Request) {
 		FROM compiled_booklets WHERE id = $1`, bookletID).Scan(&b.ID, &b.DocID, &b.Status, &b.CreatedAt)
 	
 	if err == sql.ErrNoRows {
+		log.Printf("GetBooklet: booklet %s not found", bookletID)
 		http.Error(w, "booklet not found", http.StatusNotFound)
 		return
 	} else if err != nil {
+		log.Printf("Error: failed to query booklet %s: %v", bookletID, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -534,14 +557,17 @@ func HandleDownloadBooklet(w http.ResponseWriter, r *http.Request) {
 		JOIN documents d ON cb.document_id = d.id
 		WHERE cb.id = $1`, bookletID).Scan(&status, &storagePath, &sigSize, &totalOriginalPages)
 	if err == sql.ErrNoRows {
+		log.Printf("DownloadBooklet: booklet %s not found", bookletID)
 		http.Error(w, "booklet not found", http.StatusNotFound)
 		return
 	} else if err != nil {
+		log.Printf("Error: failed to query booklet %s: %v", bookletID, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	if status != "ready" {
+		log.Printf("DownloadBooklet: booklet %s is in status '%s', not ready for download", bookletID, status)
 		http.Error(w, "booklet is not ready for download", http.StatusConflict)
 		return
 	}
@@ -581,6 +607,7 @@ func HandleDownloadBooklet(w http.ResponseWriter, r *http.Request) {
 	if filter != "" || sheets != "" {
 		filteredKey, err := pdf.FilterBookletPages(ctx, storagePath, filter, sheets)
 		if err != nil {
+			log.Printf("Error: failed to slice booklet pages for %s: %v", bookletID, err)
 			http.Error(w, "failed to slice booklet pages: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -605,6 +632,7 @@ func HandleDownloadBooklet(w http.ResponseWriter, r *http.Request) {
 	// Create a temporary file to download to
 	tempDir, err := os.MkdirTemp("", "booklet-stream-*")
 	if err != nil {
+		log.Printf("Error: failed to create temp dir for streaming %s: %v", bookletID, err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -613,12 +641,14 @@ func HandleDownloadBooklet(w http.ResponseWriter, r *http.Request) {
 	tempFile := filepath.Join(tempDir, "temp.pdf")
 	err = storage.DownloadFile(ctx, targetPath, tempFile)
 	if err != nil {
+		log.Printf("Error: failed to download booklet %s from storage: %v", bookletID, err)
 		http.Error(w, "failed to stream from object store", http.StatusInternalServerError)
 		return
 	}
 
 	f, err := os.Open(tempFile)
 	if err != nil {
+		log.Printf("Error: failed to open temp file %s for streaming: %v", tempFile, err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -665,6 +695,7 @@ func HandleSemanticSearch(w http.ResponseWriter, r *http.Request) {
 	// Compute embedding for search query
 	queryVec, err := embeddings.ActiveEmbedder.Embed(ctx, query)
 	if err != nil {
+		log.Printf("Error: failed to embed semantic search query: %v", err)
 		http.Error(w, "failed to embed search query: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -695,6 +726,7 @@ func HandleSemanticSearch(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := db.DB.Query(sqlQuery, args...)
 	if err != nil {
+		log.Printf("Error: semantic search database query failed: %v", err)
 		http.Error(w, "database query failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -705,6 +737,7 @@ func HandleSemanticSearch(w http.ResponseWriter, r *http.Request) {
 		var r SearchResult
 		var docID string
 		if err := rows.Scan(&docID, &r.DocName, &r.PageNumber, &r.Text, &r.Similarity); err != nil {
+			log.Printf("Error: failed to scan semantic search row: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

@@ -68,7 +68,16 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
     throw new Error(errText || `API Error: ${response.status}`);
   }
 
-  return response.json() as Promise<T>;
+  if (response.status === 204) {
+    return null as any;
+  }
+
+  const text = await response.text();
+  if (!text) {
+    return null as any;
+  }
+
+  return JSON.parse(text) as T;
 }
 
 export const api = {
