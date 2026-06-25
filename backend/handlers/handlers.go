@@ -596,7 +596,7 @@ func HandleDownloadBooklet(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Map booklet pages to physical sheet range
-		startSheet, endSheet := pdf.MapPagesToSheets(totalOriginalPages, sigSize, startPage, endPage)
+		startSheet, endSheet := pdf.MapPagesToSheets(startPage, endPage)
 		sheets = fmt.Sprintf("%d-%d", startSheet, endSheet)
 	}
 

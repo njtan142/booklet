@@ -31,12 +31,13 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
   const [ruinedEnd, setRuinedEnd] = useState<string>("")
   const [recoveryError, setRecoveryError] = useState<string>("")
 
-  // Total sheets in booklet is Ceil(totalPages / 4) * 2 pages per sheet?
-  // Let's calculate: signature size is 4. Target pages is Ceil(totalPages / 4) * 4.
-	// Since each sheet of paper has 2 booklet pages (front and back),
-	// Total sheets = Target Pages / 2.
+  // Total sheets in booklet is Ceil(totalPages / 4).
+  // Target pages is Ceil(totalPages / 4) * 4.
+  // Since each physical sheet of paper contains 4 original document pages,
+  // Total sheets = Target Pages / 4.
   const targetPages = Math.ceil(totalPages / 4) * 4
-  const totalSheets = targetPages / 2
+  const totalSheets = targetPages / 4
+  const maxBookletPage = targetPages / 2
 
   // Generate batches
   const numBatches = Math.ceil(totalSheets / batchSize)
@@ -62,13 +63,13 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
     const start = parseInt(ruinedStart)
     const end = ruinedEnd ? parseInt(ruinedEnd) : start
 
-    if (isNaN(start) || start < 1 || start > targetPages) {
-      setRecoveryError(`Please enter a valid starting page number between 1 and ${targetPages}`)
+    if (isNaN(start) || start < 1 || start > maxBookletPage) {
+      setRecoveryError(`Please enter a valid starting page number between 1 and ${maxBookletPage}`)
       return
     }
 
-    if (isNaN(end) || end < start || end > targetPages) {
-      setRecoveryError(`Please enter a valid ending page number between ${start} and ${targetPages}`)
+    if (isNaN(end) || end < start || end > maxBookletPage) {
+      setRecoveryError(`Please enter a valid ending page number between ${start} and ${maxBookletPage}`)
       return
     }
 
@@ -107,7 +108,7 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
         </div>
         <div className="glass p-4 rounded-xl border-border">
           <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wider">Estimated Signatures</p>
-          <p className="text-2xl font-extrabold text-foreground mt-1">{targetPages / 4}</p>
+          <p className="text-2xl font-extrabold text-foreground mt-1">{Math.ceil(totalSheets / 4)}</p>
         </div>
       </div>
 

@@ -69,27 +69,17 @@ func TestCalculateBookletLayout_InvalidSignature(t *testing.T) {
 	}
 }
 
-func TestMapPagesToSheets_S8_N8(t *testing.T) {
-	// 8 booklet pages, signature size 8
-	// Sheet 1 has pages: [8, 1, 2, 7]
-	// Sheet 2 has pages: [6, 3, 4, 5]
-
-	// Case 1: Page 7 is ruined -> should map to Sheet 1
-	startSheet, endSheet := MapPagesToSheets(8, 8, 7, 7)
-	if startSheet != 1 || endSheet != 1 {
-		t.Errorf("Expected page 7 to map to Sheet 1-1, got Sheet %d-%d", startSheet, endSheet)
+func TestMapPagesToSheets(t *testing.T) {
+	// Case 1: Booklet page 13 is ruined -> should map to Sheet 7
+	startSheet, endSheet := MapPagesToSheets(13, 13)
+	if startSheet != 7 || endSheet != 7 {
+		t.Errorf("Expected booklet page 13 to map to Sheet 7-7, got Sheet %d-%d", startSheet, endSheet)
 	}
 
-	// Case 2: Pages 5-6 are ruined -> should map to Sheet 2
-	startSheet, endSheet = MapPagesToSheets(8, 8, 5, 6)
-	if startSheet != 2 || endSheet != 2 {
-		t.Errorf("Expected pages 5-6 to map to Sheet 2-2, got Sheet %d-%d", startSheet, endSheet)
-	}
-
-	// Case 3: Pages 6-7 are ruined -> should map to Sheets 1-2
-	startSheet, endSheet = MapPagesToSheets(8, 8, 6, 7)
-	if startSheet != 1 || endSheet != 2 {
-		t.Errorf("Expected pages 6-7 to map to Sheets 1-2, got Sheets %d-%d", startSheet, endSheet)
+	// Case 2: Booklet pages 13-16 are ruined -> should map to Sheets 7-8
+	startSheet, endSheet = MapPagesToSheets(13, 16)
+	if startSheet != 7 || endSheet != 8 {
+		t.Errorf("Expected booklet pages 13-16 to map to Sheets 7-8, got Sheets %d-%d", startSheet, endSheet)
 	}
 }
 
