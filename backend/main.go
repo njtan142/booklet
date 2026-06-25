@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"booklet/auth"
 	"booklet/db"
@@ -82,7 +83,7 @@ func main() {
 	}
 
 	log.Printf("Server is running on port %s...", port)
-	if err := http.ListenAndServe(":"+port, corsMiddleware(mux)); err != nil {
+	if err := http.ListenAndServe(":"+port, loggingMiddleware(corsMiddleware(mux))); err != nil {
 		log.Fatalf("Fatal: Server failed to start: %v", err)
 	}
 }
@@ -90,12 +91,43 @@ func main() {
 // corsMiddleware sets up headers for local development between Vite and Go
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		frontendURL := os.Getenv("FRONTEND_URL")
-		if frontendURL == "" {
-			frontendURL = "http://localhost:5173"
+		origin := r.Header.Get("Origin")
+		
+		allowedOriginsStr := os.Getenv("ALLOWED_ORIGINS")
+		if allowedOriginsStr == "" {
+			// Fallback to FRONTEND_URL if ALLOWED_ORIGINS is not set
+			frontendURL := os.Getenv("FRONTEND_URL")
+			if frontendURL == "" {
+				frontendURL = "http://localhost:5173"
+			}
+			allowedOriginsStr = frontendURL
 		}
 
-		w.Header().Set("Access-Control-Allow-Origin", frontendURL)
+		// Parse comma-separated origins
+		allowedOrigins := make(map[string]bool)
+		var firstOrigin string
+		for _, o := range strings.Split(allowedOriginsStr, ",") {
+			trimmed := strings.TrimSpace(o)
+			if trimmed != "" {
+				allowedOrigins[trimmed] = true
+				if firstOrigin == "" {
+					firstOrigin = trimmed
+				}
+			}
+		}
+
+		// Default fallback if parsing fails or list is empty
+		if firstOrigin == "" {
+			firstOrigin = "http://localhost:5173"
+			allowedOrigins[firstOrigin] = true
+		}
+
+		allowOrigin := firstOrigin
+		if allowedOrigins[origin] {
+			allowOrigin = origin
+		}
+
+		w.Header().Set("Access-Control-Allow-Origin", allowOrigin)
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key")
@@ -109,3 +141,23 @@ func corsMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+type responseWriterWrapper struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (rw *responseWriterWrapper) WriteHeader(code int) {
+	rw.statusCode = code
+	rw.ResponseWriter.WriteHeader(code)
+}
+
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rw := &responseWriterWrapper{ResponseWriter: w, statusCode: http.StatusOK}
+		log.Printf("-> Started %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+		next.ServeHTTP(rw, r)
+		log.Printf("<- Finished %s %s with %d", r.Method, r.URL.Path, rw.statusCode)
+	})
+}
+
