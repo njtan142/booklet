@@ -118,11 +118,11 @@ export const Login: React.FC = () => {
       {/* Stars & Cosmic Lines SVG Background */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden z-0">
         {/* Glow Spots */}
-        <div className="absolute top-[10%] left-[20%] w-[350px] h-[350px] bg-purple-900/10 rounded-full blur-[100px] animate-glow-cosmic" />
-        <div className="absolute bottom-[20%] right-[15%] w-[450px] h-[450px] bg-indigo-900/10 rounded-full blur-[120px] animate-glow-cosmic" style={{ animationDelay: "2s" }} />
+        <div className="absolute top-[10%] left-[20%] w-[350px] h-[350px] bg-primary/12 rounded-full blur-[100px] animate-glow-cosmic" />
+        <div className="absolute bottom-[20%] right-[15%] w-[450px] h-[450px] bg-accent/12 rounded-full blur-[120px] animate-glow-cosmic" style={{ animationDelay: "2s" }} />
 
         {/* Network Constellations */}
-        <svg className="absolute top-[5%] right-[5%] w-[450px] h-[400px] text-purple-500/10 opacity-60 hidden md:block" fill="none" stroke="currentColor" strokeWidth="1">
+        <svg className="absolute top-[5%] right-[5%] w-[450px] h-[400px] text-primary/10 opacity-60 hidden md:block" fill="none" stroke="currentColor" strokeWidth="1">
           <line x1="80" y1="120" x2="260" y2="180" stroke="currentColor" />
           <line x1="260" y1="180" x2="360" y2="60" stroke="currentColor" />
           <line x1="260" y1="180" x2="310" y2="350" stroke="currentColor" strokeDasharray="4 4" />
@@ -138,7 +138,7 @@ export const Login: React.FC = () => {
           <circle cx="420" cy="150" r="4" fill="#a5b4fc" className="animate-ping" style={{ animationDuration: "3s" }} />
         </svg>
 
-        <svg className="absolute bottom-[10%] left-[2%] w-[300px] h-[250px] text-indigo-500/10 opacity-50 hidden md:block" fill="none" stroke="currentColor" strokeWidth="1">
+        <svg className="absolute bottom-[10%] left-[2%] w-[300px] h-[250px] text-accent/10 opacity-50 hidden md:block" fill="none" stroke="currentColor" strokeWidth="1">
           <line x1="50" y1="50" x2="180" y2="100" stroke="currentColor" />
           <line x1="180" y1="100" x2="220" y2="210" stroke="currentColor" />
           <line x1="50" y1="50" x2="100" y2="180" stroke="currentColor" />
@@ -151,44 +151,44 @@ export const Login: React.FC = () => {
 
         {/* Floating 3D Crystals */}
         <div className="absolute top-[22%] left-[10%] animate-float opacity-75 hidden xl:block">
-          <svg viewBox="0 0 100 120" className="w-16 h-20 text-purple-400/25" fill="none" stroke="currentColor" strokeWidth="1">
-            <polygon points="50,10 15,50 50,110" fill="rgba(139, 92, 246, 0.04)" />
-            <polygon points="50,10 85,50 50,110" fill="rgba(167, 139, 250, 0.08)" />
-            <polygon points="15,50 85,50 50,110" fill="rgba(124, 58, 237, 0.03)" />
-            <line x1="50" y1="10" x2="50" y2="110" stroke="rgba(255,255,255,0.35)" strokeWidth="1.2" />
-            <line x1="15" y1="50" x2="85" y2="50" stroke="rgba(255,255,255,0.15)" />
+          <svg viewBox="0 0 100 120" className="w-16 h-20 text-primary/25" fill="none" stroke="currentColor" strokeWidth="1">
+            <polygon points="50,10 15,50 50,110" fill="rgb(245 224 0 / 0.05)" />
+            <polygon points="50,10 85,50 50,110" fill="rgb(254 94 65 / 0.08)" />
+            <polygon points="15,50 85,50 50,110" fill="rgb(0 0 0 / 0.04)" />
+            <line x1="50" y1="10" x2="50" y2="110" stroke="rgb(var(--foreground) / 0.35)" strokeWidth="1.2" />
+            <line x1="15" y1="50" x2="85" y2="50" stroke="rgb(var(--foreground) / 0.15)" />
           </svg>
         </div>
 
         <div className="absolute bottom-[15%] right-[10%] animate-float-reverse opacity-70 hidden xl:block" style={{ animationDelay: "1.5s" }}>
-          <svg viewBox="0 0 100 120" className="w-14 h-18 text-violet-400/20" fill="none" stroke="currentColor" strokeWidth="1">
-            <polygon points="50,15 20,55 50,105" fill="rgba(139, 92, 246, 0.03)" />
-            <polygon points="50,15 80,55 50,105" fill="rgba(167, 139, 250, 0.06)" />
-            <line x1="50" y1="15" x2="50" y2="105" stroke="rgba(255,255,255,0.25)" strokeWidth="1" />
+          <svg viewBox="0 0 100 120" className="w-14 h-18 text-accent/20" fill="none" stroke="currentColor" strokeWidth="1">
+            <polygon points="50,15 20,55 50,105" fill="rgb(245 224 0 / 0.05)" />
+            <polygon points="50,15 80,55 50,105" fill="rgb(254 94 65 / 0.06)" />
+            <line x1="50" y1="15" x2="50" y2="105" stroke="rgb(var(--foreground) / 0.25)" strokeWidth="1" />
           </svg>
         </div>
 
         <div className="absolute bottom-[5%] left-[25%] animate-float-slow opacity-60 hidden md:block">
-          <svg viewBox="0 0 80 100" className="w-10 h-14 text-indigo-400/20" fill="none" stroke="currentColor" strokeWidth="1">
-            <polygon points="40,10 15,45 40,90" fill="rgba(99, 102, 241, 0.03)" />
-            <polygon points="40,10 65,45 40,90" fill="rgba(99, 102, 241, 0.05)" />
-            <line x1="40" y1="10" x2="40" y2="90" stroke="rgba(255,255,255,0.2)" />
+          <svg viewBox="0 0 80 100" className="w-10 h-14 text-primary/20" fill="none" stroke="currentColor" strokeWidth="1">
+            <polygon points="40,10 15,45 40,90" fill="rgb(245 224 0 / 0.05)" />
+            <polygon points="40,10 65,45 40,90" fill="rgb(0 0 0 / 0.05)" />
+            <line x1="40" y1="10" x2="40" y2="90" stroke="rgb(var(--foreground) / 0.2)" />
           </svg>
         </div>
 
         {/* Floating Folded Booklets */}
         <div className="absolute bottom-[18%] right-[22%] animate-float opacity-65 hidden lg:block" style={{ animationDelay: "0.5s" }}>
-          <svg viewBox="0 0 100 100" className="w-24 h-24 text-indigo-400/20" fill="none" stroke="currentColor" strokeWidth="1">
-            <path d="M15,28 Q35,18 50,32 Q65,18 85,28 V78 Q65,68 50,82 Q35,68 15,78 Z" fill="rgba(99, 102, 241, 0.06)" />
-            <path d="M50,32 V82" stroke="rgba(255,255,255,0.25)" strokeWidth="1.5" />
-            <path d="M20,34 Q35,26 50,38 Q65,26 80,34" stroke="rgba(255,255,255,0.15)" />
+          <svg viewBox="0 0 100 100" className="w-24 h-24 text-accent/20" fill="none" stroke="currentColor" strokeWidth="1">
+            <path d="M15,28 Q35,18 50,32 Q65,18 85,28 V78 Q65,68 50,82 Q35,68 15,78 Z" fill="rgb(9 99 63 / 0.06)" />
+            <path d="M50,32 V82" stroke="rgb(var(--foreground) / 0.25)" strokeWidth="1.5" />
+            <path d="M20,34 Q35,26 50,38 Q65,26 80,34" stroke="rgb(var(--foreground) / 0.15)" />
           </svg>
         </div>
 
         <div className="absolute bottom-[10%] left-[10%] animate-float-reverse opacity-70 hidden md:block" style={{ animationDelay: "2.5s" }}>
-          <svg viewBox="0 0 100 100" className="w-20 h-20 text-purple-400/20" fill="none" stroke="currentColor" strokeWidth="1">
-            <path d="M15,28 Q35,18 50,32 Q65,18 85,28 V78 Q65,68 50,82 Q35,68 15,78 Z" fill="rgba(168, 85, 247, 0.05)" />
-            <path d="M50,32 V82" stroke="rgba(255,255,255,0.2)" />
+          <svg viewBox="0 0 100 100" className="w-20 h-20 text-primary/20" fill="none" stroke="currentColor" strokeWidth="1">
+            <path d="M15,28 Q35,18 50,32 Q65,18 85,28 V78 Q65,68 50,82 Q35,68 15,78 Z" fill="rgb(55 100 48 / 0.06)" />
+            <path d="M50,32 V82" stroke="rgb(var(--foreground) / 0.2)" />
           </svg>
         </div>
 
@@ -202,98 +202,98 @@ export const Login: React.FC = () => {
       <div className="relative w-full max-w-5xl flex items-center justify-center z-10 py-6">
         
         {/* LEFT TAB: Studio Tools (Offset slightly behind main modal) */}
-        <Card className="absolute left-[3%] w-[250px] h-[500px] glass rounded-3xl p-6 hidden lg:flex flex-col items-center border border-white/5 opacity-40 shadow-2xl z-0 -translate-x-[20%] rotate-[-3deg] scale-[0.92] select-none">
-          <h3 className="text-zinc-400 text-sm font-bold tracking-wider uppercase mb-1">Studio Tools</h3>
-          <div className="w-full h-[1px] bg-zinc-800/80 my-4" />
+        <Card className="absolute left-[3%] w-[250px] h-[500px] glass rounded-3xl p-6 hidden lg:flex flex-col items-center border border-border opacity-40 shadow-2xl z-0 -translate-x-[20%] rotate-[-3deg] scale-[0.92] select-none">
+          <h3 className="text-muted-foreground text-sm font-bold tracking-wider uppercase mb-1">Studio Tools</h3>
+          <div className="w-full h-[1px] bg-border my-4" />
           
           <div className="flex flex-col gap-6 w-full items-center mt-4">
             {/* Signature tool selected */}
-            <Card className="w-14 h-14 rounded-2xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shadow-inner">
+            <Card className="w-14 h-14 rounded-2xl bg-primary/10 border border-primary/30 flex items-center justify-center text-primary shadow-inner">
               <SignatureIcon className="h-6 w-6" />
             </Card>
 
-            <div className="w-14 h-14 rounded-2xl bg-zinc-950/40 border border-zinc-900 flex items-center justify-center text-zinc-650">
-              <StorageBucketIcon className="h-6 w-6 text-zinc-500" />
+            <div className="w-14 h-14 rounded-2xl bg-background/60 border border-border flex items-center justify-center text-muted-foreground">
+              <StorageBucketIcon className="h-6 w-6 text-muted-foreground" />
             </div>
 
-            <div className="w-14 h-14 rounded-2xl bg-zinc-950/40 border border-zinc-900 flex items-center justify-center text-zinc-650">
-              <SearchVectorIcon className="h-6 w-6 text-zinc-500" />
+            <div className="w-14 h-14 rounded-2xl bg-background/60 border border-border flex items-center justify-center text-muted-foreground">
+              <SearchVectorIcon className="h-6 w-6 text-muted-foreground" />
             </div>
 
-            <div className="w-14 h-14 rounded-2xl bg-zinc-950/40 border border-zinc-900 flex items-center justify-center text-zinc-650">
-              <ObservableGraphIcon className="h-6 w-6 text-zinc-500" />
+            <div className="w-14 h-14 rounded-2xl bg-background/60 border border-border flex items-center justify-center text-muted-foreground">
+              <ObservableGraphIcon className="h-6 w-6 text-muted-foreground" />
             </div>
           </div>
         </Card>
 
         {/* RIGHT TAB: Templates (Offset slightly behind main modal) */}
-        <Card className="absolute right-[3%] w-[250px] h-[500px] glass rounded-3xl p-6 hidden lg:flex flex-col items-center border border-white/5 opacity-40 shadow-2xl z-0 translate-x-[20%] rotate-[3deg] scale-[0.92] select-none">
-          <h3 className="text-zinc-400 text-sm font-bold tracking-wider uppercase mb-1">Templates</h3>
-          <div className="w-full h-[1px] bg-zinc-800/80 my-4" />
+        <Card className="absolute right-[3%] w-[250px] h-[500px] glass rounded-3xl p-6 hidden lg:flex flex-col items-center border border-border opacity-40 shadow-2xl z-0 translate-x-[20%] rotate-[3deg] scale-[0.92] select-none">
+          <h3 className="text-muted-foreground text-sm font-bold tracking-wider uppercase mb-1">Templates</h3>
+          <div className="w-full h-[1px] bg-border my-4" />
           
           {/* Visual placeholders representing pages and binding margins */}
           <div className="flex flex-col gap-4 w-full mt-4">
-            <div className="h-16 rounded-xl bg-zinc-950/40 border border-zinc-900/60 p-3 flex flex-col justify-between">
-              <div className="w-10 h-1.5 bg-zinc-800 rounded" />
-              <div className="w-full h-2 bg-zinc-900 rounded" />
+            <div className="h-16 rounded-xl bg-background/60 border border-border p-3 flex flex-col justify-between">
+              <div className="w-10 h-1.5 bg-muted-foreground/50 rounded" />
+              <div className="w-full h-2 bg-muted rounded" />
             </div>
-            <div className="h-16 rounded-xl bg-zinc-950/40 border border-zinc-900/60 p-3 flex flex-col justify-between">
-              <div className="w-14 h-1.5 bg-zinc-800 rounded" />
-              <div className="w-full h-2 bg-zinc-900 rounded" />
+            <div className="h-16 rounded-xl bg-background/60 border border-border p-3 flex flex-col justify-between">
+              <div className="w-14 h-1.5 bg-muted-foreground/50 rounded" />
+              <div className="w-full h-2 bg-muted rounded" />
             </div>
-            <div className="h-16 rounded-xl bg-zinc-950/40 border border-zinc-900/60 p-3 flex flex-col justify-between opacity-50">
-              <div className="w-8 h-1.5 bg-zinc-800 rounded" />
-              <div className="w-full h-2 bg-zinc-900 rounded" />
+            <div className="h-16 rounded-xl bg-background/60 border border-border p-3 flex flex-col justify-between opacity-50">
+              <div className="w-8 h-1.5 bg-muted-foreground/50 rounded" />
+              <div className="w-full h-2 bg-muted rounded" />
             </div>
-            <div className="h-16 rounded-xl bg-zinc-950/40 border border-zinc-900/60 p-3 flex flex-col justify-between opacity-20">
-              <div className="w-12 h-1.5 bg-zinc-800 rounded" />
-              <div className="w-full h-2 bg-zinc-900 rounded" />
+            <div className="h-16 rounded-xl bg-background/60 border border-border p-3 flex flex-col justify-between opacity-20">
+              <div className="w-12 h-1.5 bg-muted-foreground/50 rounded" />
+              <div className="w-full h-2 bg-muted rounded" />
             </div>
           </div>
         </Card>
 
         {/* CENTERED MODAL: The principal interactive Login Panel */}
-        <Card className="glass w-full max-w-xl p-8 md:p-10 rounded-[32px] border border-white/10 space-y-8 shadow-2xl relative z-10 mx-auto bg-slate-950/35">
+        <Card className="glass w-full max-w-xl p-8 md:p-10 rounded-[32px] border border-border space-y-8 shadow-2xl relative z-10 mx-auto bg-background/75">
           
           {/* Logo Badge & Headings */}
           <div className="flex flex-col items-center text-center gap-4">
             <div className="relative group">
               {/* Purple glow ring around the logo */}
-              <div className="absolute inset-0 bg-violet-600 rounded-2xl blur-xl opacity-60 group-hover:opacity-90 transition-opacity" />
-              <Card className="relative bg-gradient-to-tr from-violet-600 to-indigo-500 p-4 rounded-2xl text-white shadow-xl shadow-violet-500/20 border border-violet-400/25 flex items-center justify-center">
-                <BookOpen className="h-9 w-9 text-white" aria-hidden="true" />
+              <div className="absolute inset-0 bg-primary rounded-2xl blur-xl opacity-60 group-hover:opacity-90 transition-opacity" />
+              <Card className="relative bg-gradient-to-tr from-primary to-accent p-4 rounded-2xl text-primary-foreground shadow-xl shadow-primary/20 border border-border flex items-center justify-center">
+                <BookOpen className="h-9 w-9 text-primary-foreground" aria-hidden="true" />
               </Card>
             </div>
             <div>
-              <h1 className="text-3xl font-extrabold text-white tracking-tight m-0 bg-gradient-to-r from-white via-zinc-100 to-zinc-300 bg-clip-text">
+              <h1 className="text-3xl font-extrabold text-foreground tracking-tight m-0 bg-gradient-to-r from-foreground via-foreground/80 to-muted-foreground bg-clip-text">
                 Booklet Studio
               </h1>
               
               {/* Features List with customized icons and colors */}
-              <div className="mt-6 flex flex-col items-start gap-3 max-w-xs mx-auto text-zinc-300 text-sm font-medium">
-                <div className="flex items-center gap-3.5 hover:text-white transition-colors">
-                  <div className="w-8 h-8 rounded-lg bg-indigo-500/10 border border-indigo-500/25 flex items-center justify-center text-indigo-400 shrink-0">
+              <div className="mt-6 flex flex-col items-start gap-3 max-w-xs mx-auto text-muted-foreground text-sm font-medium">
+                <div className="flex items-center gap-3.5 hover:text-foreground transition-colors">
+                  <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/25 flex items-center justify-center text-primary shrink-0">
                     <SignatureIcon className="h-4 w-4" />
                   </div>
                   <span>Double-sided imposition</span>
                 </div>
 
-                <div className="flex items-center gap-3.5 hover:text-white transition-colors">
-                  <div className="w-8 h-8 rounded-lg bg-orange-500/10 border border-orange-500/25 flex items-center justify-center text-orange-400 shrink-0">
+                <div className="flex items-center gap-3.5 hover:text-foreground transition-colors">
+                  <div className="w-8 h-8 rounded-lg bg-accent/10 border border-accent/25 flex items-center justify-center text-accent shrink-0">
                     <StorageBucketIcon className="h-4 w-4" />
                   </div>
                   <span>Modular S3-compatible storage</span>
                 </div>
 
-                <div className="flex items-center gap-3.5 hover:text-white transition-colors">
-                  <div className="w-8 h-8 rounded-lg bg-sky-500/10 border border-sky-500/25 flex items-center justify-center text-sky-400 shrink-0">
+                <div className="flex items-center gap-3.5 hover:text-foreground transition-colors">
+                  <div className="w-8 h-8 rounded-lg bg-background/70 border border-border flex items-center justify-center text-foreground shrink-0">
                     <SearchVectorIcon className="h-4 w-4" />
                   </div>
                   <span>pg_vector searches</span>
                 </div>
 
-                <div className="flex items-center gap-3.5 hover:text-white transition-colors">
-                  <div className="w-8 h-8 rounded-lg bg-pink-500/10 border border-pink-500/25 flex items-center justify-center text-pink-400 shrink-0">
+                <div className="flex items-center gap-3.5 hover:text-foreground transition-colors">
+                  <div className="w-8 h-8 rounded-lg bg-background/70 border border-border flex items-center justify-center text-foreground shrink-0">
                     <ObservableGraphIcon className="h-4 w-4" />
                   </div>
                   <span>Prometheus observability</span>
@@ -306,10 +306,10 @@ export const Login: React.FC = () => {
           <Tabs defaultValue="oidc" className="w-full">
             
             {/* Custom styled tabs headers matching the pill style */}
-            <TabsList className={`grid w-full ${isDev ? "grid-cols-2" : "grid-cols-1"} bg-zinc-950/45 border border-zinc-800/80 rounded-2xl p-1 h-auto mb-6`}>
+            <TabsList className={`grid w-full ${isDev ? "grid-cols-2" : "grid-cols-1"} bg-muted/60 border border-border rounded-2xl p-1 h-auto mb-6`}>
               <TabsTrigger 
                 value="oidc" 
-                className="flex items-center gap-2 justify-center py-2.5 rounded-xl font-bold text-xs text-zinc-400 data-[state=active]:bg-zinc-900 data-[state=active]:border-zinc-700/60 data-[state=active]:text-white transition-all border border-transparent"
+                className="flex items-center gap-2 justify-center py-2.5 rounded-xl font-bold text-xs text-muted-foreground data-[state=active]:bg-background data-[state=active]:border-border data-[state=active]:text-foreground transition-all border border-transparent"
               >
                 <Shield className="h-4 w-4" aria-hidden="true" />
                 OIDC Login
@@ -317,7 +317,7 @@ export const Login: React.FC = () => {
               {isDev && (
                 <TabsTrigger 
                   value="mock" 
-                  className="flex items-center gap-2 justify-center py-2.5 rounded-xl font-bold text-xs text-zinc-400 data-[state=active]:bg-zinc-900 data-[state=active]:border-zinc-700/60 data-[state=active]:text-white transition-all border border-transparent"
+                  className="flex items-center gap-2 justify-center py-2.5 rounded-xl font-bold text-xs text-muted-foreground data-[state=active]:bg-background data-[state=active]:border-border data-[state=active]:text-foreground transition-all border border-transparent"
                 >
                   <Key className="h-4 w-4" aria-hidden="true" />
                   Developer Bypass
@@ -327,7 +327,7 @@ export const Login: React.FC = () => {
 
             {/* OIDC Authentication Tab */}
             <TabsContent value="oidc" className="space-y-6 pt-2 focus-visible:outline-none">
-              <p className="text-zinc-400 text-xs text-center leading-relaxed max-w-sm mx-auto">
+              <p className="text-muted-foreground text-xs text-center leading-relaxed max-w-sm mx-auto">
                 Login securely using your enterprise OpenID Connect identity provider
               </p>
               
@@ -347,7 +347,7 @@ export const Login: React.FC = () => {
                     variant="ghost"
                     onClick={() => window.location.href = api.loginUrl()}
                     title={`Login with ${provider.label}`}
-                    className="w-12 h-12 flex items-center justify-center rounded-xl bg-zinc-900/60 border border-zinc-850 hover:bg-zinc-800/80 hover:border-zinc-700 hover:scale-105 active:scale-95 transition-all cursor-pointer shadow-lg p-0"
+                    className="w-12 h-12 flex items-center justify-center rounded-xl bg-background/70 border border-border hover:bg-muted/70 hover:border-primary/30 hover:scale-105 active:scale-95 transition-all cursor-pointer shadow-lg p-0"
                   >
                     {provider.component}
                   </Button>
@@ -359,14 +359,14 @@ export const Login: React.FC = () => {
                   variant="ghost"
                   onClick={() => window.location.href = api.loginUrl()}
                   title="More providers"
-                  className="w-12 h-12 flex items-center justify-center rounded-xl bg-zinc-900/60 border border-zinc-850 hover:bg-zinc-800/80 hover:border-zinc-700 hover:scale-105 active:scale-95 transition-all text-zinc-400 hover:text-white font-bold p-0"
+                  className="w-12 h-12 flex items-center justify-center rounded-xl bg-background/70 border border-border hover:bg-muted/70 hover:border-primary/30 hover:scale-105 active:scale-95 transition-all text-muted-foreground hover:text-foreground font-bold p-0"
                 >
                   •••
                 </Button>
               </div>
 
               <Button 
-                className="w-full py-6 rounded-2xl font-bold flex items-center justify-center gap-2 bg-gradient-to-r from-violet-700 to-indigo-650 hover:from-violet-600 hover:to-indigo-550 border border-violet-500/20 text-white shadow-lg shadow-violet-700/20 hover:shadow-violet-600/35 transition-all"
+                className="w-full py-6 rounded-2xl font-bold flex items-center justify-center gap-2 bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90 border border-border text-primary-foreground shadow-lg shadow-primary/15 hover:shadow-primary/25 transition-all"
                 onClick={() => window.location.href = api.loginUrl()}
               >
                 <Shield className="h-4.5 w-4.5" aria-hidden="true" />
@@ -388,14 +388,14 @@ export const Login: React.FC = () => {
                       name="email"
                       render={({ field }) => (
                         <FormItem className="space-y-1.5">
-                          <Label htmlFor="mock-email" className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Email Address</Label>
+                          <Label htmlFor="mock-email" className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Email Address</Label>
                           <FormControl>
                             <Input
                               id="mock-email"
                               type="email"
                               placeholder="e.g. dev@example.com"
                               required
-                              className="bg-zinc-900/40 border-zinc-800 focus:border-violet-500/50 focus:ring-violet-500/20 rounded-xl h-11 text-zinc-200"
+                              className="bg-background/70 border-border focus:border-primary/50 focus:ring-primary/20 rounded-xl h-11 text-foreground"
                               {...field}
                             />
                           </FormControl>
@@ -408,14 +408,14 @@ export const Login: React.FC = () => {
                       name="name"
                       render={({ field }) => (
                         <FormItem className="space-y-1.5">
-                          <Label htmlFor="mock-name" className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Display Name</Label>
+                          <Label htmlFor="mock-name" className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Display Name</Label>
                           <FormControl>
                             <Input
                               id="mock-name"
                               type="text"
                               placeholder="e.g. Developer User"
                               required
-                              className="bg-zinc-900/40 border-zinc-800 focus:border-violet-500/50 focus:ring-violet-500/20 rounded-xl h-11 text-zinc-200"
+                              className="bg-background/70 border-border focus:border-primary/50 focus:ring-primary/20 rounded-xl h-11 text-foreground"
                               {...field}
                             />
                           </FormControl>
@@ -425,7 +425,7 @@ export const Login: React.FC = () => {
 
                     <Button
                       type="submit"
-                      className="w-full py-6 rounded-2xl font-bold flex items-center justify-center gap-2 mt-4 bg-zinc-900 border border-zinc-800 hover:bg-zinc-850 hover:border-zinc-700 hover:text-white transition-all text-zinc-300"
+                      className="w-full py-6 rounded-2xl font-bold flex items-center justify-center gap-2 mt-4 bg-background border border-border hover:bg-muted/70 hover:border-primary/30 hover:text-foreground transition-all text-foreground"
                     >
                       <Key className="h-4.5 w-4.5" aria-hidden="true" />
                       Start Dev Session
@@ -440,7 +440,7 @@ export const Login: React.FC = () => {
       </div>
       
       {/* Footer copyright section at bottom */}
-      <footer className="absolute bottom-6 left-0 right-0 text-center text-zinc-550 text-[11px] font-medium tracking-wide pointer-events-none select-none z-10">
+      <footer className="absolute bottom-6 left-0 right-0 text-center text-muted-foreground text-[11px] font-medium tracking-wide pointer-events-none select-none z-10">
         &copy; {new Date().getFullYear()} Booklet Studio - Imposition &amp; Management
       </footer>
     </div>

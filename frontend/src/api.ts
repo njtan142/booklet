@@ -81,6 +81,7 @@ export const api = {
   // Documents
   listDocuments: () => apiFetch<DocumentInfo[]>("/documents"),
   getDocument: (id: string) => apiFetch<DocumentDetail>(`/documents/${id}`),
+  dismissDocument: (id: string) => apiFetch<void>(`/documents/${id}/dismiss`, { method: "POST" }),
   
   uploadDocument: async (file: File): Promise<{ document_id: string }> => {
     const formData = new FormData();

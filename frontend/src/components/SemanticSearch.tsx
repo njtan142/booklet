@@ -51,7 +51,7 @@ export const SemanticSearch: React.FC = () => {
       <>
         {parts.map((part, i) => 
           regex.test(part) 
-            ? <mark key={i} className="bg-primary/30 text-white rounded px-0.5 border border-primary/20">{part}</mark> 
+            ? <mark key={i} className="bg-primary/30 text-primary-foreground rounded px-0.5 border border-primary/20">{part}</mark> 
             : part
         )}
       </>
@@ -61,8 +61,8 @@ export const SemanticSearch: React.FC = () => {
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
       <div>
-        <h2 className="text-2xl font-bold text-white m-0">Semantic Search</h2>
-        <p className="text-zinc-400 text-sm mt-1">Ask questions or search topics across your library using self-hosted vector embeddings.</p>
+        <h2 className="text-2xl font-bold text-foreground m-0">Semantic Search</h2>
+        <p className="text-muted-foreground text-sm mt-1">Ask questions or search topics across your library using self-hosted vector embeddings.</p>
       </div>
 
       {/* Search Input Bar */}
@@ -77,12 +77,12 @@ export const SemanticSearch: React.FC = () => {
                   <Input
                     id="search-query-input"
                     placeholder="Type a search query..."
-                    className="pl-10 py-5 bg-zinc-950/40 border-zinc-800"
+                    className="pl-10 py-5 bg-background/70 border-border"
                     aria-label="Search query"
                     {...field}
                   />
                 </FormControl>
-                <Search className="absolute left-3.5 top-3.5 h-4.5 w-4.5 text-zinc-400" aria-hidden="true" />
+                <Search className="absolute left-3.5 top-3.5 h-4.5 w-4.5 text-muted-foreground" aria-hidden="true" />
               </FormItem>
             )}
           />
@@ -113,44 +113,44 @@ export const SemanticSearch: React.FC = () => {
         {isLoading && (
           <div className="flex flex-col items-center justify-center py-20 gap-4">
             <Loader2 className="h-8 w-8 animate-spin text-primary" aria-hidden="true" />
-            <p className="text-zinc-400 text-xs animate-pulse">Running embedding lookup & pg_vector cosine similarity search...</p>
+            <p className="text-muted-foreground text-xs animate-pulse">Running embedding lookup & pg_vector cosine similarity search...</p>
           </div>
         )}
 
         {!isLoading && triggerQuery && results.length === 0 && (
-          <div className="glass p-12 text-center rounded-2xl border-zinc-800">
-            <p className="text-zinc-400 text-sm">No semantically matching pages found in the library.</p>
+          <div className="glass p-12 text-center rounded-2xl border-border">
+            <p className="text-muted-foreground text-sm">No semantically matching pages found in the library.</p>
           </div>
         )}
 
         {!isLoading && results.length > 0 && (
           <div className="space-y-4">
-            <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Top Semantic Matches</h3>
+            <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Top Semantic Matches</h3>
             <div className="space-y-3">
               {results.map((result, idx) => {
                 const similarityPercentage = Math.round(result.similarity * 100)
                 return (
-                  <div key={idx} className="glass p-5 rounded-2xl border-zinc-800/80 hover:border-zinc-700/80 transition-all flex flex-col md:flex-row md:items-start gap-4">
+                  <div key={idx} className="glass p-5 rounded-2xl border-border hover:border-primary/30 transition-all flex flex-col md:flex-row md:items-start gap-4">
                     {/* Score column */}
-                    <div className="flex md:flex-col items-center justify-between md:justify-start gap-2 bg-zinc-950/50 border border-zinc-900 px-3 py-2 rounded-xl min-w-28 text-center">
-                      <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Match Score</span>
-                      <span className="text-lg font-black text-violet-400">{similarityPercentage}%</span>
+                    <div className="flex md:flex-col items-center justify-between md:justify-start gap-2 bg-background/60 border border-border px-3 py-2 rounded-xl min-w-28 text-center">
+                      <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Match Score</span>
+                      <span className="text-lg font-black text-primary">{similarityPercentage}%</span>
                     </div>
 
                     {/* Content column */}
                     <div className="flex-1 min-w-0 space-y-2.5">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="flex items-center gap-1 text-[11px] text-zinc-400 font-semibold bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800/60">
-                          <FileText className="h-3 w-3 text-zinc-400" aria-hidden="true" />
+                        <span className="flex items-center gap-1 text-[11px] text-muted-foreground font-semibold bg-muted px-2 py-0.5 rounded border border-border">
+                          <FileText className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
                           {result.document_name}
                         </span>
-                        <ChevronRight className="h-3 w-3 text-zinc-600" aria-hidden="true" />
-                        <span className="text-[11px] text-primary font-bold bg-primary/10 px-2 py-0.5 rounded border border-primary/10">
+                        <ChevronRight className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
+                        <span className="text-[11px] text-primary font-bold bg-primary/15 px-2 py-0.5 rounded border border-primary/20">
                           Page {result.page_number}
                         </span>
                       </div>
 
-                      <p className="text-zinc-300 text-xs leading-relaxed italic bg-zinc-950/20 p-3 rounded-lg border border-zinc-900/50">
+                      <p className="text-foreground/80 text-xs leading-relaxed italic bg-background/40 p-3 rounded-lg border border-border">
                         {highlightText(result.text_snippet, triggerQuery)}
                       </p>
                     </div>

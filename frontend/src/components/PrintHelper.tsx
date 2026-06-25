@@ -83,8 +83,8 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-white m-0">Printing Guide & Helper</h2>
-          <p className="text-zinc-400 text-sm mt-1">Manual duplex optimization & recovery wizard for booklet ID: {bookletId.slice(0, 8)}...</p>
+          <h2 className="text-2xl font-bold text-foreground m-0">Printing Guide & Helper</h2>
+          <p className="text-muted-foreground text-sm mt-1">Manual duplex optimization & recovery wizard for booklet ID: {bookletId.slice(0, 8)}...</p>
         </div>
         <Button variant="outline" size="sm" onClick={onBack}>
           Back to Dashboard
@@ -93,35 +93,35 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
 
       {/* Overview stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="glass p-4 rounded-xl border-zinc-800">
-          <p className="text-zinc-400 text-xs font-semibold uppercase tracking-wider">Original Pages</p>
-          <p className="text-2xl font-extrabold text-white mt-1">{totalPages}</p>
+        <div className="glass p-4 rounded-xl border-border">
+          <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wider">Original Pages</p>
+          <p className="text-2xl font-extrabold text-foreground mt-1">{totalPages}</p>
         </div>
-        <div className="glass p-4 rounded-xl border-zinc-800">
-          <p className="text-zinc-400 text-xs font-semibold uppercase tracking-wider">Padded Booklet Pages</p>
-          <p className="text-2xl font-extrabold text-violet-400 mt-1">{targetPages}</p>
+        <div className="glass p-4 rounded-xl border-border">
+          <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wider">Padded Booklet Pages</p>
+          <p className="text-2xl font-extrabold text-primary mt-1">{targetPages}</p>
         </div>
-        <div className="glass p-4 rounded-xl border-zinc-800">
-          <p className="text-zinc-400 text-xs font-semibold uppercase tracking-wider">Total Sheets of Paper</p>
-          <p className="text-2xl font-extrabold text-blue-400 mt-1">{totalSheets}</p>
+        <div className="glass p-4 rounded-xl border-border">
+          <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wider">Total Sheets of Paper</p>
+          <p className="text-2xl font-extrabold text-accent mt-1">{totalSheets}</p>
         </div>
-        <div className="glass p-4 rounded-xl border-zinc-800">
-          <p className="text-zinc-400 text-xs font-semibold uppercase tracking-wider">Estimated Signatures</p>
-          <p className="text-2xl font-extrabold text-emerald-400 mt-1">{targetPages / 4}</p>
+        <div className="glass p-4 rounded-xl border-border">
+          <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wider">Estimated Signatures</p>
+          <p className="text-2xl font-extrabold text-foreground mt-1">{targetPages / 4}</p>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Step-by-step Batch Printing Column */}
         <div className="lg:col-span-2 space-y-6">
-          <div className="glass p-6 rounded-2xl border-zinc-800 space-y-4">
-            <div className="flex items-center justify-between border-b border-zinc-800/80 pb-4">
+          <div className="glass p-6 rounded-2xl border-border space-y-4">
+            <div className="flex items-center justify-between border-b border-border pb-4">
               <div className="flex items-center gap-2">
                 <Printer className="h-5 w-5 text-primary" aria-hidden="true" />
-                <h3 className="text-lg font-bold text-white m-0">Batch Printing Console</h3>
+                <h3 className="text-lg font-bold text-foreground m-0">Batch Printing Console</h3>
               </div>
               <div className="flex items-center gap-3">
-                <Label htmlFor="batch-size-select" className="text-zinc-400 text-xs font-medium">Batch size:</Label>
+                <Label htmlFor="batch-size-select" className="text-muted-foreground text-xs font-medium">Batch size:</Label>
                 <div className="w-24">
                   <Select 
                     id="batch-size-select"
@@ -141,12 +141,12 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
               </div>
             </div>
 
-            <p className="text-zinc-300 text-xs leading-relaxed">
+            <p className="text-foreground/80 text-xs leading-relaxed">
               We recommend printing in batches of 10 or 20 sheets. That way, if a paper jam or double-feed occurs during the back-side print, you only waste a few sheets instead of the entire document.
             </p>
 
-            <ScrollArea className="max-h-[450px] pr-2">
-              <div className="space-y-3">
+            <ScrollArea className="max-h-[450px]">
+              <div className="space-y-3 pr-4">
               {batches.map((batch) => {
                 const isDone = completedBatches[batch.id] || false;
                 return (
@@ -154,22 +154,22 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
                     key={batch.id} 
                     className={`p-4 rounded-xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-4 ${
                       isDone 
-                        ? "bg-emerald-950/10 border-emerald-800/30" 
-                        : "bg-zinc-950/40 border-zinc-800/60 hover:border-zinc-700/80"
+                        ? "bg-primary/10 border-primary/25" 
+                        : "bg-background/60 border-border hover:border-primary/25"
                     }`}
                   >
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
                         <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-                          isDone ? "bg-emerald-500/20 text-emerald-400" : "bg-primary/20 text-primary"
+                          isDone ? "bg-accent/20 text-accent" : "bg-primary/20 text-primary"
                         }`}>
                           Batch {batch.id}
                         </span>
-                        <h4 className="text-sm font-bold text-white m-0">
+                        <h4 className="text-sm font-bold text-foreground m-0">
                           Sheets {batch.startSheet} &ndash; {batch.endSheet}
                         </h4>
                       </div>
-                      <p className="text-zinc-400 text-xs">
+                      <p className="text-muted-foreground text-xs">
                         Prints booklet pages {2 * batch.startSheet - 1} to {2 * batch.endSheet}
                       </p>
                     </div>
@@ -198,8 +198,8 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
                         variant="ghost"
                         className={`p-2 rounded-lg border transition-all cursor-pointer ${
                           isDone 
-                            ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20" 
-                            : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-300 hover:bg-zinc-800"
+                            ? "bg-accent/10 border-accent/30 text-accent hover:bg-accent/20" 
+                            : "bg-background border-border text-muted-foreground hover:text-foreground hover:bg-muted/70"
                         }`}
                         aria-label={isDone ? `Mark batch ${batch.id} incomplete` : `Mark batch ${batch.id} complete`}
                         aria-pressed={isDone}
@@ -215,20 +215,20 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
           </div>
 
           {/* Guide Card */}
-          <div className="glass p-6 rounded-2xl border-zinc-800 space-y-4">
-            <div className="flex items-center gap-2 border-b border-zinc-800/80 pb-4">
-              <HelpCircle className="h-5 w-5 text-blue-400" aria-hidden="true" />
-              <h3 className="text-lg font-bold text-white m-0">How to Manual Duplex Print</h3>
+          <div className="glass p-6 rounded-2xl border-border space-y-4">
+            <div className="flex items-center gap-2 border-b border-border pb-4">
+              <HelpCircle className="h-5 w-5 text-primary" aria-hidden="true" />
+              <h3 className="text-lg font-bold text-foreground m-0">How to Manual Duplex Print</h3>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs text-zinc-300">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs text-foreground/80">
               <div className="space-y-2">
-                <h4 className="font-bold text-white uppercase tracking-wider text-[10px] text-blue-400">Step 1: Front Side</h4>
+                <h4 className="font-bold uppercase tracking-wider text-[10px] text-primary">Step 1: Front Side</h4>
                 <p>1. Download the **Fronts (Odds)** PDF for your active batch.</p>
                 <p>2. Send to printer. Make sure printer settings are: **1-sided, Landscape, Actual Size (no scaling)**.</p>
                 <p>3. Let all pages print out. They will print on one side of each sheet.</p>
               </div>
               <div className="space-y-2">
-                <h4 className="font-bold text-white uppercase tracking-wider text-[10px] text-violet-400">Step 2: Back Side</h4>
+                <h4 className="font-bold uppercase tracking-wider text-[10px] text-accent">Step 2: Back Side</h4>
                 <p>1. Take the printed stack out of the output tray without shuffling or rearranging them.</p>
                 <p>2. Flip the stack over so you print on the blank side. **Orientation rule**: typically, flip along the short edge (bottom to top) and re-insert into the input tray.</p>
                 <p>3. Download the **Backs (Evens)** PDF and print it. The backs will print in register with the fronts!</p>
@@ -239,22 +239,22 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
 
         {/* Reprint Recovery Column */}
         <div className="space-y-6">
-          <div className="glass p-6 rounded-2xl border-zinc-800 space-y-4">
-            <div className="flex items-center gap-2 border-b border-zinc-800/80 pb-4">
-              <AlertTriangle className="h-5 w-5 text-rose-500" aria-hidden="true" />
-              <h3 className="text-lg font-bold text-white m-0">Ruined Print Recovery</h3>
+          <div className="glass p-6 rounded-2xl border-border space-y-4">
+            <div className="flex items-center gap-2 border-b border-border pb-4">
+              <AlertTriangle className="h-5 w-5 text-destructive" aria-hidden="true" />
+              <h3 className="text-lg font-bold text-foreground m-0">Ruined Print Recovery</h3>
             </div>
-            <p className="text-zinc-400 text-xs leading-relaxed">
+            <p className="text-muted-foreground text-xs leading-relaxed">
               Did the printer double-feed, jam, or skip a page? Don't panic and don't throw away the successful sheets!
             </p>
-            <p className="text-zinc-400 text-xs leading-relaxed">
+            <p className="text-muted-foreground text-xs leading-relaxed">
               Enter the booklet page numbers that were ruined below. We will automatically calculate which physical sheets contain those pages and download just the required fronts and backs.
             </p>
 
             <div className="space-y-3 pt-2">
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <Label htmlFor="ruined-start-input" className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Start Page #</Label>
+                  <Label htmlFor="ruined-start-input" className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Start Page #</Label>
                   <Input 
                     id="ruined-start-input"
                     type="number" 
@@ -266,7 +266,7 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label htmlFor="ruined-end-input" className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">End Page # (Opt)</Label>
+                  <Label htmlFor="ruined-end-input" className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">End Page # (Opt)</Label>
                   <Input 
                     id="ruined-end-input"
                     type="number" 
@@ -280,7 +280,7 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
               </div>
 
               {recoveryError && (
-                <p className="text-rose-400 text-[11px] font-medium animate-pulse">{recoveryError}</p>
+                <p className="text-destructive text-[11px] font-medium animate-pulse">{recoveryError}</p>
               )}
 
               <div className="flex flex-col gap-2 pt-2">
@@ -302,7 +302,7 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
                 </Button>
                 <Button 
                   variant="outline" 
-                  className="w-full text-zinc-300 border-zinc-800 hover:bg-zinc-900"
+                  className="w-full text-foreground border-border hover:bg-muted/70"
                   onClick={() => handleDownloadRecovery("both")}
                 >
                   <RefreshCw className="h-4 w-4" aria-hidden="true" />
@@ -313,15 +313,15 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
           </div>
 
           {/* Visual Flipper Hint */}
-          <div className="glass p-6 rounded-2xl border-zinc-800 space-y-3">
-            <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-wider m-0">Printer Feed Tips</h4>
-            <div className="space-y-3 text-xs text-zinc-400 leading-relaxed">
-              <Card className="p-3 bg-zinc-950/50 rounded-lg border border-zinc-900">
-                <span className="font-bold text-white block mb-1">Testing Flip Direction:</span>
+          <div className="glass p-6 rounded-2xl border-border space-y-3">
+            <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider m-0">Printer Feed Tips</h4>
+            <div className="space-y-3 text-xs text-muted-foreground leading-relaxed">
+              <Card className="p-3 bg-background/60 rounded-lg border border-border">
+                <span className="font-bold text-foreground block mb-1">Testing Flip Direction:</span>
                 Draw a small arrow pointing **UP** on the top page of the tray. Print a single test sheet. See where the arrow ends up. This tells you if your printer feeds head-first, face-up, or face-down!
               </Card>
-              <Card className="p-3 bg-zinc-950/50 rounded-lg border border-zinc-900">
-                <span className="font-bold text-white block mb-1">Page Orientation:</span>
+              <Card className="p-3 bg-background/60 rounded-lg border border-border">
+                <span className="font-bold text-foreground block mb-1">Page Orientation:</span>
                 For landscape booklets, printing pages double-sided requires flipping along the **short edge** to prevent the back page from printing upside down!
               </Card>
             </div>
