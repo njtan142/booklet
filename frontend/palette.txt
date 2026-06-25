@@ -1,0 +1,31 @@
+/* Coolors Exported Palette - https://coolors.co/333232-f5e000-f5f5f5-fe5e41-0b0500 */
+
+- CSV
+
+333232,f5e000,f5f5f5,fe5e41,0b0500
+
+- With #
+
+#333232, #f5e000, #f5f5f5, #fe5e41, #0b0500
+
+- Array
+
+["333232","f5e000","f5f5f5","fe5e41","0b0500"]
+
+- Object
+
+{"Graphite":"333232","Bright Lemon":"f5e000","White Smoke":"f5f5f5","Tomato":"fe5e41","Pitch Black":"0b0500"}
+
+- Extended Array
+
+[{"name":"Graphite","hex":"333232","rgb":[51,50,50],"cmyk":[0,2,2,80],"hsb":[0,2,20],"hsl":[0,1,20],"lab":[21,0,0]},{"name":"Bright Lemon","hex":"f5e000","rgb":[245,224,0],"cmyk":[0,9,100,4],"hsb":[55,100,96],"hsl":[55,100,48],"lab":[88,-11,88]},{"name":"White Smoke","hex":"f5f5f5","rgb":[245,245,245],"cmyk":[0,0,0,4],"hsb":[0,0,96],"hsl":[0,0,96],"lab":[97,0,0]},{"name":"Tomato","hex":"fe5e41","rgb":[254,94,65],"cmyk":[0,63,74,0],"hsb":[9,74,100],"hsl":[9,99,63],"lab":[61,59,48]},{"name":"Pitch Black","hex":"0b0500","rgb":[11,5,0],"cmyk":[0,55,100,96],"hsb":[27,100,4],"hsl":[27,100,2],"lab":[2,1,2]}]
+
+- XML
+
+<palette>
+  <color name="Graphite" hex="333232" r="51" g="50" b="50" />
+  <color name="Bright Lemon" hex="f5e000" r="245" g="224" b="0" />
+  <color name="White Smoke" hex="f5f5f5" r="245" g="245" b="245" />
+  <color name="Tomato" hex="fe5e41" r="254" g="94" b="65" />
+  <color name="Pitch Black" hex="0b0500" r="11" g="5" b="0" />
+</palette>

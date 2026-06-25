@@ -11,6 +11,7 @@ import React, { useEffect, useState } from "react"
 import { api } from "./api"
 import type { AuthStatus } from "./api"
 import { LogOut, BookOpen, Search, User } from "lucide-react"
+import { Card } from "./components/ui/card"
 
 import { Dashboard } from "./components/Dashboard"
 import { SemanticSearch } from "./components/SemanticSearch"
@@ -66,9 +67,9 @@ const RootLayout: React.FC = () => {
         {!isLoginPage && authStatus.authenticated && (
           <header className="glass sticky top-0 z-50 px-6 py-4 flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="bg-primary p-2 rounded-lg text-white shadow-md shadow-primary/20">
+              <Card className="bg-primary p-2 rounded-lg text-white shadow-md shadow-primary/20">
                 <BookOpen className="h-6 w-6" aria-hidden="true" />
-              </div>
+              </Card>
               <div>
                 <h1 className="text-xl font-bold tracking-tight text-white m-0 leading-none">Booklet Studio</h1>
                 <p className="text-zinc-400 text-xs mt-1">Duplex Imposition & Semantic Search</p>
@@ -97,10 +98,10 @@ const RootLayout: React.FC = () => {
             </nav>
 
             <div className="flex items-center gap-4">
-              <div className="hidden md:flex items-center gap-2 bg-zinc-900/50 border border-zinc-800/80 px-3 py-1.5 rounded-lg">
+              <Card className="hidden md:flex items-center gap-2 bg-zinc-900/50 border border-zinc-800/80 px-3 py-1.5 rounded-lg">
                 <User className="h-4 w-4 text-zinc-400" aria-hidden="true" />
                 <span className="text-zinc-300 text-xs font-medium">{authStatus.user?.name || authStatus.user?.email}</span>
-              </div>
+              </Card>
               <a 
                 href={api.logoutUrl()} 
                 className="p-2 text-zinc-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-all border border-transparent hover:border-rose-500/20"

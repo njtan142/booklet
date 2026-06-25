@@ -1,10 +1,12 @@
-import React, { useState } from "react"
+import React from "react"
+import { useForm } from "react-hook-form"
 import { api } from "../api"
 import { Button } from "./ui/button"
 import { Card } from "./ui/card"
 import { Input } from "./ui/input"
 import { Label } from "./ui/label"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/tabs"
+import { Form, FormField, FormItem, FormControl } from "./ui/form"
 import { BookOpen, Shield, Key } from "lucide-react"
 
 // Custom SVGs/Components for premium feature iconography
@@ -96,16 +98,20 @@ export const Login: React.FC = () => {
   // Show the Developer Bypass tab when running via the Vite dev server,
   // OR when the bundle was built with VITE_DEV_BYPASS_ENABLED=true (Docker dev).
   const isDev = import.meta.env.DEV || import.meta.env.VITE_DEV_BYPASS_ENABLED === "true"
-  const [email, setEmail] = useState<string>("dev@example.com")
-  const [name, setName] = useState<string>("Developer User")
 
-  const handleMockLogin = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (email) {
-      const loginUrl = `${api.devLoginUrl()}?email=${encodeURIComponent(email)}&name=${encodeURIComponent(name)}`
+  const devForm = useForm({
+    defaultValues: {
+      email: "dev@example.com",
+      name: "Developer User",
+    },
+  })
+
+  const handleMockLogin = devForm.handleSubmit((values) => {
+    if (values.email) {
+      const loginUrl = `${api.devLoginUrl()}?email=${encodeURIComponent(values.email)}&name=${encodeURIComponent(values.name)}`
       window.location.href = loginUrl
     }
-  }
+  })
 
   return (
     <div className="relative min-h-[92vh] flex items-center justify-center overflow-visible px-4 py-8">
@@ -375,41 +381,57 @@ export const Login: React.FC = () => {
                   Bypass authentication locally using a mock profile. This generates a valid JWT session key signed by the backend.
                 </p>
                 
-                <form onSubmit={handleMockLogin} className="space-y-4 pt-1">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="mock-email" className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Email Address</Label>
-                    <Input 
-                      id="mock-email"
-                      type="email" 
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="e.g. dev@example.com"
-                      required
-                      className="bg-zinc-900/40 border-zinc-800 focus:border-violet-500/50 focus:ring-violet-500/20 rounded-xl h-11 text-zinc-200"
+                <Form {...devForm}>
+                  <form onSubmit={handleMockLogin} className="space-y-4 pt-1">
+                    <FormField
+                      control={devForm.control}
+                      name="email"
+                      render={({ field }) => (
+                        <FormItem className="space-y-1.5">
+                          <Label htmlFor="mock-email" className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Email Address</Label>
+                          <FormControl>
+                            <Input
+                              id="mock-email"
+                              type="email"
+                              placeholder="e.g. dev@example.com"
+                              required
+                              className="bg-zinc-900/40 border-zinc-800 focus:border-violet-500/50 focus:ring-violet-500/20 rounded-xl h-11 text-zinc-200"
+                              {...field}
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
                     />
-                  </div>
 
-                  <div className="space-y-1.5">
-                    <Label htmlFor="mock-name" className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Display Name</Label>
-                    <Input 
-                      id="mock-name"
-                      type="text" 
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      placeholder="e.g. Developer User"
-                      required
-                      className="bg-zinc-900/40 border-zinc-800 focus:border-violet-500/50 focus:ring-violet-500/20 rounded-xl h-11 text-zinc-200"
+                    <FormField
+                      control={devForm.control}
+                      name="name"
+                      render={({ field }) => (
+                        <FormItem className="space-y-1.5">
+                          <Label htmlFor="mock-name" className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Display Name</Label>
+                          <FormControl>
+                            <Input
+                              id="mock-name"
+                              type="text"
+                              placeholder="e.g. Developer User"
+                              required
+                              className="bg-zinc-900/40 border-zinc-800 focus:border-violet-500/50 focus:ring-violet-500/20 rounded-xl h-11 text-zinc-200"
+                              {...field}
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
                     />
-                  </div>
 
-                  <Button 
-                    type="submit" 
-                    className="w-full py-6 rounded-2xl font-bold flex items-center justify-center gap-2 mt-4 bg-zinc-900 border border-zinc-800 hover:bg-zinc-850 hover:border-zinc-700 hover:text-white transition-all text-zinc-300"
-                  >
-                    <Key className="h-4.5 w-4.5" aria-hidden="true" />
-                    Start Dev Session
-                  </Button>
-                </form>
+                    <Button
+                      type="submit"
+                      className="w-full py-6 rounded-2xl font-bold flex items-center justify-center gap-2 mt-4 bg-zinc-900 border border-zinc-800 hover:bg-zinc-850 hover:border-zinc-700 hover:text-white transition-all text-zinc-300"
+                    >
+                      <Key className="h-4.5 w-4.5" aria-hidden="true" />
+                      Start Dev Session
+                    </Button>
+                  </form>
+                </Form>
               </TabsContent>
             )}
           </Tabs>

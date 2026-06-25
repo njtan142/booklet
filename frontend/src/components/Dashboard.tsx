@@ -6,6 +6,7 @@ import { Button } from "./ui/button"
 import { Input } from "./ui/input"
 import { Select } from "./ui/select"
 import { Label } from "./ui/label"
+import { ScrollArea } from "./ui/scroll-area"
 import { PrintHelper } from "./PrintHelper"
 import { 
   UploadCloud, 
@@ -176,46 +177,49 @@ export const Dashboard: React.FC = () => {
           ) : documents.length === 0 ? (
             <p className="text-zinc-400 text-xs text-center py-6">No documents uploaded yet.</p>
           ) : (
-            <div className="space-y-2.5 max-h-[400px] overflow-y-auto pr-2">
-              {documents.map((doc) => {
-                const isSelected = selectedDocId === doc.id
-                return (
-                  <button 
-                    type="button"
-                    key={doc.id} 
-                    onClick={() => doc.status === "ready" && setSelectedDocId(doc.id)}
-                    disabled={doc.status !== "ready"}
-                    className={`w-full text-left p-3.5 rounded-xl border flex items-center justify-between gap-4 cursor-pointer transition-all ${
-                      isSelected 
-                        ? "bg-primary/10 border-primary/30" 
-                        : doc.status === "processing" 
-                          ? "bg-zinc-950/20 border-zinc-900 opacity-60 cursor-not-allowed"
-                          : "bg-zinc-950/40 border-zinc-800/60 hover:border-zinc-700/80"
-                    }`}
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className={`p-2 rounded-lg ${isSelected ? "bg-primary/20 text-primary" : "bg-zinc-900 text-zinc-400"}`}>
-                        <FileText className="h-4 w-4" aria-hidden="true" />
+            <ScrollArea className="max-h-[400px] pr-2">
+              <div className="space-y-2.5">
+                {documents.map((doc) => {
+                  const isSelected = selectedDocId === doc.id
+                  return (
+                    <Button
+                      type="button"
+                      key={doc.id}
+                      variant="ghost"
+                      onClick={() => doc.status === "ready" && setSelectedDocId(doc.id)}
+                      disabled={doc.status !== "ready"}
+                      className={`w-full text-left h-auto p-3.5 rounded-xl border flex items-center justify-between gap-4 cursor-pointer transition-all ${
+                        isSelected
+                          ? "bg-primary/10 border-primary/30"
+                          : doc.status === "processing"
+                            ? "bg-zinc-950/20 border-zinc-900 opacity-60 cursor-not-allowed"
+                            : "bg-zinc-950/40 border-zinc-800/60 hover:border-zinc-700/80"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className={`p-2 rounded-lg ${isSelected ? "bg-primary/20 text-primary" : "bg-zinc-900 text-zinc-400"}`}>
+                          <FileText className="h-4 w-4" aria-hidden="true" />
+                        </div>
+                        <div className="min-w-0">
+                          <h4 className="text-xs font-bold text-white truncate m-0">{doc.name}</h4>
+                          <p className="text-[10px] text-zinc-400 mt-0.5">{doc.total_pages} pages</p>
+                        </div>
                       </div>
-                      <div className="min-w-0">
-                        <h4 className="text-xs font-bold text-white truncate m-0">{doc.name}</h4>
-                        <p className="text-[10px] text-zinc-400 mt-0.5">{doc.total_pages} pages</p>
-                      </div>
-                    </div>
 
-                    <div>
-                      {doc.status === "processing" ? (
-                        <Loader2 className="h-4 w-4 animate-spin text-zinc-400" aria-hidden="true" />
-                      ) : doc.status === "failed" ? (
-                        <AlertCircle className="h-4 w-4 text-rose-550" aria-hidden="true" />
-                      ) : (
-                        <FileCheck className="h-4 w-4 text-emerald-500" aria-hidden="true" />
-                      )}
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
+                      <div>
+                        {doc.status === "processing" ? (
+                          <Loader2 className="h-4 w-4 animate-spin text-zinc-400" aria-hidden="true" />
+                        ) : doc.status === "failed" ? (
+                          <AlertCircle className="h-4 w-4 text-rose-550" aria-hidden="true" />
+                        ) : (
+                          <FileCheck className="h-4 w-4 text-emerald-500" aria-hidden="true" />
+                        )}
+                      </div>
+                    </Button>
+                  )
+                })}
+              </div>
+            </ScrollArea>
           )}
         </div>
       </div>

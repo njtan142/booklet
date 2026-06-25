@@ -1,15 +1,20 @@
 import React, { useState } from "react"
+import { useForm } from "react-hook-form"
 import { useQuery } from "@tanstack/react-query"
 import { api } from "../api"
 import { Button } from "./ui/button"
 import { Input } from "./ui/input"
 import { Select } from "./ui/select"
+import { Form, FormField, FormItem, FormControl } from "./ui/form"
 import { Search, Loader2, Sparkles, FileText, ChevronRight } from "lucide-react"
 
 export const SemanticSearch: React.FC = () => {
-  const [query, setQuery] = useState<string>("")
   const [triggerQuery, setTriggerQuery] = useState<string>("")
   const [docFilter, setDocFilter] = useState<string>("")
+
+  const searchForm = useForm({
+    defaultValues: { query: "" },
+  })
 
   // Fetch documents for the dropdown filter
   const { data: documents = [] } = useQuery({
@@ -25,12 +30,11 @@ export const SemanticSearch: React.FC = () => {
   })
   const results = rawResults || []
 
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (query.trim()) {
-      setTriggerQuery(query.trim())
+  const handleSearch = searchForm.handleSubmit((values) => {
+    if (values.query.trim()) {
+      setTriggerQuery(values.query.trim())
     }
-  }
+  })
 
   // Highlight query words in text snippet
   const highlightText = (text: string, searchWord: string) => {
@@ -62,38 +66,47 @@ export const SemanticSearch: React.FC = () => {
       </div>
 
       {/* Search Input Bar */}
-      <form onSubmit={handleSearch} className="flex flex-col md:flex-row gap-3">
-        <div className="flex-1 relative">
-          <Input 
-            id="search-query-input"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Type a search query..."
-            className="pl-10 py-5 bg-zinc-950/40 border-zinc-800"
-            aria-label="Search query"
+      <Form {...searchForm}>
+        <form onSubmit={handleSearch} className="flex flex-col md:flex-row gap-3">
+          <FormField
+            control={searchForm.control}
+            name="query"
+            render={({ field }) => (
+              <FormItem className="flex-1 relative">
+                <FormControl>
+                  <Input
+                    id="search-query-input"
+                    placeholder="Type a search query..."
+                    className="pl-10 py-5 bg-zinc-950/40 border-zinc-800"
+                    aria-label="Search query"
+                    {...field}
+                  />
+                </FormControl>
+                <Search className="absolute left-3.5 top-3.5 h-4.5 w-4.5 text-zinc-400" aria-hidden="true" />
+              </FormItem>
+            )}
           />
-          <Search className="absolute left-3.5 top-3.5 h-4.5 w-4.5 text-zinc-400" aria-hidden="true" />
-        </div>
 
-        <div className="w-full md:w-56">
-          <Select 
-            id="doc-filter-select"
-            value={docFilter} 
-            onChange={(e) => setDocFilter(e.target.value)}
-            aria-label="Filter search by document"
-          >
-            <option value="">All Documents</option>
-            {documents.filter(d => d.status === "ready").map(doc => (
-              <option key={doc.id} value={doc.id}>{doc.name}</option>
-            ))}
-          </Select>
-        </div>
+          <div className="w-full md:w-56">
+            <Select
+              id="doc-filter-select"
+              value={docFilter}
+              onChange={(e) => setDocFilter(e.target.value)}
+              aria-label="Filter search by document"
+            >
+              <option value="">All Documents</option>
+              {documents.filter(d => d.status === "ready").map(doc => (
+                <option key={doc.id} value={doc.id}>{doc.name}</option>
+              ))}
+            </Select>
+          </div>
 
-        <Button type="submit" disabled={isLoading} className="py-5 px-6 font-bold flex items-center gap-2">
-          {isLoading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Sparkles className="h-4 w-4" aria-hidden="true" />}
-          Semantic Search
-        </Button>
-      </form>
+          <Button type="submit" disabled={isLoading} className="py-5 px-6 font-bold flex items-center gap-2">
+            {isLoading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Sparkles className="h-4 w-4" aria-hidden="true" />}
+            Semantic Search
+          </Button>
+        </form>
+      </Form>
 
       {/* Results Container */}
       <div className="space-y-4">

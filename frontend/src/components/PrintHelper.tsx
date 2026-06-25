@@ -1,9 +1,11 @@
 import React, { useState } from "react"
 import { api } from "../api"
 import { Button } from "./ui/button"
+import { Card } from "./ui/card"
 import { Select } from "./ui/select"
 import { Input } from "./ui/input"
 import { Label } from "./ui/label"
+import { ScrollArea } from "./ui/scroll-area"
 import { 
   Printer, 
   RotateCw, 
@@ -143,7 +145,8 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
               We recommend printing in batches of 10 or 20 sheets. That way, if a paper jam or double-feed occurs during the back-side print, you only waste a few sheets instead of the entire document.
             </p>
 
-            <div className="space-y-3 max-h-[450px] overflow-y-auto pr-2">
+            <ScrollArea className="max-h-[450px] pr-2">
+              <div className="space-y-3">
               {batches.map((batch) => {
                 const isDone = completedBatches[batch.id] || false;
                 return (
@@ -207,7 +210,8 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
                   </div>
                 )
               })}
-            </div>
+              </div>
+            </ScrollArea>
           </div>
 
           {/* Guide Card */}
@@ -312,14 +316,14 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
           <div className="glass p-6 rounded-2xl border-zinc-800 space-y-3">
             <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-wider m-0">Printer Feed Tips</h4>
             <div className="space-y-3 text-xs text-zinc-400 leading-relaxed">
-              <div className="p-3 bg-zinc-950/50 rounded-lg border border-zinc-900">
+              <Card className="p-3 bg-zinc-950/50 rounded-lg border border-zinc-900">
                 <span className="font-bold text-white block mb-1">Testing Flip Direction:</span>
                 Draw a small arrow pointing **UP** on the top page of the tray. Print a single test sheet. See where the arrow ends up. This tells you if your printer feeds head-first, face-up, or face-down!
-              </div>
-              <div className="p-3 bg-zinc-950/50 rounded-lg border border-zinc-900">
+              </Card>
+              <Card className="p-3 bg-zinc-950/50 rounded-lg border border-zinc-900">
                 <span className="font-bold text-white block mb-1">Page Orientation:</span>
                 For landscape booklets, printing pages double-sided requires flipping along the **short edge** to prevent the back page from printing upside down!
-              </div>
+              </Card>
             </div>
           </div>
         </div>
