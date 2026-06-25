@@ -41,9 +41,9 @@ CREATE INDEX ON document_pages USING hnsw (embedding vector_cosine_ops);
 ### 2. API Endpoints (Separation of Concerns)
 
 #### **Document Management**
-- `POST /api/documents` - Upload and process PDF (split to pages, extract text, embed).
+- `POST /api/documents/upload` - Upload and process PDF. **Crucial behavior**: The backend splits the uploaded PDF into single-page PDF files, uploads each page file separately to MinIO object storage, extracts text, and generates embeddings for database indexing.
 - `GET /api/documents` - List documents.
-- `GET /api/documents/{id}` - Document details and page layout metadata.
+- `GET /api/documents/{id}` - Document details and page layout metadata (including individual page dimensions).
 
 #### **Booklet Compilation & Printing Helper**
 - `POST /api/documents/{id}/booklet/compile` - Compiles custom booklet.

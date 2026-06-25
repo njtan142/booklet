@@ -5,12 +5,12 @@ This checklist tracks the status of all components and features as defined in th
 ---
 
 ## 1. Project Initialization & Setup
-- [ ] Initialize Git repository (`git init`)
-- [ ] Initialize Go backend module (`go mod init booklet`)
-- [ ] Initialize Vite React frontend with TypeScript (`npx create-vite`)
-- [ ] Add project rules `.agents/AGENTS.md`
-- [ ] Establish approved implementation plan `implementation_plan.md`
-- [ ] Maintain `shadcn-doctor` dependency as a `devDependency` in frontend `package.json`
+- [x] Initialize Git repository (`git init`)
+- [x] Initialize Go backend module (`go mod init booklet`)
+- [x] Initialize Vite React frontend with TypeScript (`npx create-vite`)
+- [x] Add project rules `.agents/AGENTS.md`
+- [x] Establish approved implementation plan `implementation_plan.md`
+- [x] Maintain `shadcn-doctor` dependency as a `devDependency` in frontend `package.json`
 
 ---
 
@@ -60,14 +60,14 @@ This checklist tracks the status of all components and features as defined in th
 
 ---
 
-## 4. Backend Processing & Storage Services
-- [ ] Split multi-page PDF files into single-page PDFs in a temporary workspace using `pdfcpu`
-- [ ] Extract plain text from split PDF pages using `github.com/dslipak/pdf`
-- [ ] Connect MinIO S3-compatible storage driver
+## 4. Backend Processing & Storage Services (Upload Phase)
+- [ ] Write a PDF page-splitter worker using `pdfcpu` to split uploaded PDFs into single-page PDF files during document upload processing
+- [ ] Implement storage helper to upload each split single-page PDF file separately to MinIO object storage during the upload phase
+- [ ] Write page text extraction routines using `github.com/dslipak/pdf` during upload processing
+- [ ] Connect object storage driver (MinIO) to upload/download single-page and compiled PDFs
 - [ ] Create MinIO bucket auto-provisioner checking/making buckets on startup
-- [ ] Implement helper to upload single pages and compiled booklet PDFs to MinIO
-- [ ] Integrate Ollama embedding API connector (`all-minilm` 384-dimension embeddings)
-- [ ] Implement hash-based deterministic Bag-of-Words Mock embedding fallback
+- [ ] Integrate vector embedding service calling Ollama API (`all-minilm` model, 384 dimensions)
+- [ ] Implement a Bag-of-Words Mock embedding fallback for lightweight offline run
 
 ---
 
