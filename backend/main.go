@@ -46,6 +46,13 @@ func main() {
 	mux.HandleFunc("/api/auth/logout", auth.HandleLogout)
 	mux.HandleFunc("/api/auth/me", auth.HandleMe)
 
+	// Developer bypass route — only registered when APP_ENV=development.
+	// In production this path does not exist in the mux at all (returns 404).
+	if os.Getenv("APP_ENV") == "development" {
+		log.Println("[DEV] Developer bypass route registered at /api/auth/dev/login")
+		mux.HandleFunc("/api/auth/dev/login", auth.HandleDevLogin)
+	}
+
 	// Document Management routes (require authentication middleware)
 	mux.Handle("/api/documents", auth.RequireAuth(http.HandlerFunc(handlers.HandleListDocuments)))
 	mux.Handle("/api/documents/{id}", auth.RequireAuth(http.HandlerFunc(handlers.HandleGetDocument)))

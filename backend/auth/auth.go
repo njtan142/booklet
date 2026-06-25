@@ -195,76 +195,136 @@ func GetUser(ctx context.Context) (*User, bool) {
 // Handlers for Auth routing
 
 func HandleLogin(w http.ResponseWriter, r *http.Request) {
-	if useOIDC {
-		// Generate random state for CSRF prevention
-		stateBytes := make([]byte, 16)
-		rand.Read(stateBytes)
-		state := hex.EncodeToString(stateBytes)
-
-		// Set state as a short-lived cookie
-		http.SetCookie(w, &http.Cookie{
-			Name:     "oidc_state",
-			Value:    state,
-			Path:     "/",
-			Expires:  time.Now().Add(10 * time.Minute),
-			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
-		})
-
-		url := oauth2Config.AuthCodeURL(state)
-		http.Redirect(w, r, url, http.StatusFound)
-	} else {
-		// In mock mode, we present a mock login or redirect back with a mock session
-		mockEmail := r.URL.Query().Get("email")
-		mockName := r.URL.Query().Get("name")
-		
-		if mockEmail == "" {
-			// Present a simple inline login screen if they hit this directly or let frontend handle it.
-			// Let's redirect to frontend mock login page or set a default session:
-			mockEmail = "dev@example.com"
-			mockName = "Developer User"
-		}
-
-		user := User{
-			ID:    "usr_dev",
-			Email: mockEmail,
-			Name:  mockName,
-		}
-
-		// Save user to DB
-		_, err := db.DB.Exec(`
-			INSERT INTO users (id, email, name, updated_at) 
-			VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
-			ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name, updated_at = CURRENT_TIMESTAMP;
-		`, user.ID, user.Email, user.Name)
-
-		if err != nil {
-			http.Error(w, fmt.Sprintf("database error: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		tokenStr, err := GenerateToken(user)
-		if err != nil {
-			http.Error(w, "session generation failed", http.StatusInternalServerError)
-			return
-		}
-
-		http.SetCookie(w, &http.Cookie{
-			Name:     cookieName,
-			Value:    tokenStr,
-			Path:     "/",
-			Expires:  time.Now().Add(24 * time.Hour),
-			HttpOnly: true,
-			Secure:   r.TLS != nil,
-			SameSite: http.SameSiteLaxMode,
-		})
-
-		frontendURL := os.Getenv("FRONTEND_URL")
-		if frontendURL == "" {
-			frontendURL = "http://localhost:5173"
-		}
-		http.Redirect(w, r, frontendURL+"/", http.StatusFound)
+	if !useOIDC {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		fmt.Fprint(w, `{"error":"OIDC authentication is not configured"}`)
+		return
 	}
+
+	// Generate random state for CSRF prevention
+	stateBytes := make([]byte, 16)
+	rand.Read(stateBytes)
+	state := hex.EncodeToString(stateBytes)
+
+	// Set state as a short-lived cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     "oidc_state",
+		Value:    state,
+		Path:     "/",
+		Expires:  time.Now().Add(10 * time.Minute),
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	url := oauth2Config.AuthCodeURL(state)
+	http.Redirect(w, r, url, http.StatusFound)
+}
+
+// HandleDevLogin handles the developer bypass login.
+// This handler must only be registered in the router when APP_ENV=development.
+// It creates a fully functional session (real JWT + real DB upsert) with a
+// "dev_" prefixed user ID to prevent any collision with real OIDC subject IDs.
+func HandleDevLogin(w http.ResponseWriter, r *http.Request) {
+	// Double-check guard in case the handler was somehow called outside dev routing.
+	if os.Getenv("APP_ENV") != "development" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"error":"developer bypass is only available in development environments"}`)
+		return
+	}
+
+	// Resolve email and name from query params, then env vars, then hardcoded defaults.
+	devEmail := r.URL.Query().Get("email")
+	devName := r.URL.Query().Get("name")
+
+	if devEmail == "" {
+		devEmail = os.Getenv("DEV_USER_EMAIL")
+	}
+	if devEmail == "" {
+		devEmail = "dev@booklet.local"
+	}
+	if devName == "" {
+		devName = os.Getenv("DEV_USER_NAME")
+	}
+	if devName == "" {
+		devName = "Developer User"
+	}
+
+	// Prefix with "dev_" to ensure this ID can never collide with a real OIDC sub claim.
+	user := User{
+		ID:    "dev_" + sanitizeIDSegment(devEmail),
+		Email: devEmail,
+		Name:  devName,
+	}
+
+	log.Printf("[DEV BYPASS] Creating session for user: id=%s email=%s", user.ID, user.Email)
+
+	// Detect a stale user row that shares the same email but has a different ID.
+	// This can happen when switching from the old hardcoded "usr_dev" ID scheme to
+	// the new "dev_*" scheme. We do NOT silently delete it — instead we return a
+	// clear 409 so the developer knows exactly what to fix and can clean it up
+	// deliberately rather than having data removed behind their back.
+	var staleID string
+	_ = db.DB.QueryRow(`SELECT id FROM users WHERE email = $1 AND id != $2`, user.Email, user.ID).Scan(&staleID)
+	if staleID != "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		fmt.Fprintf(w,
+			`{"error":"dev bypass conflict: email %q is already registered under a different user ID (%q). `+
+				`Remove the stale row manually: DELETE FROM users WHERE id = '%s';"}`,
+			user.Email, staleID, staleID,
+		)
+		return
+	}
+
+	// Upsert user into DB so that /auth/me can return full user info.
+	_, err := db.DB.Exec(`
+		INSERT INTO users (id, email, name, updated_at)
+		VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+		ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name, updated_at = CURRENT_TIMESTAMP;
+	`, user.ID, user.Email, user.Name)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("database error: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	tokenStr, err := GenerateToken(user)
+	if err != nil {
+		http.Error(w, "session generation failed", http.StatusInternalServerError)
+		return
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     cookieName,
+		Value:    tokenStr,
+		Path:     "/",
+		Expires:  time.Now().Add(24 * time.Hour),
+		HttpOnly: true,
+		Secure:   r.TLS != nil,
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	frontendURL := os.Getenv("FRONTEND_URL")
+	if frontendURL == "" {
+		frontendURL = "http://localhost:5173"
+	}
+	http.Redirect(w, r, frontendURL+"/", http.StatusFound)
+}
+
+// sanitizeIDSegment converts an email-like string into a safe ID segment
+// by replacing non-alphanumeric characters with underscores.
+func sanitizeIDSegment(s string) string {
+	result := make([]byte, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
+			result[i] = c
+		} else {
+			result[i] = '_'
+		}
+	}
+	return string(result)
 }
 
 func HandleCallback(w http.ResponseWriter, r *http.Request) {
