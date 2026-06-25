@@ -21,7 +21,7 @@ test.describe('PDF Booklet Maker & Semantic Search Flow', () => {
     // 4. Create a mock PDF file to upload (we can use a 1-page blank text file as PDF for testing UI upload trigger)
     // In a real run, you can upload a real test PDF file.
     const fileChooserPromise = page.waitForEvent('filechooser');
-    await page.click('span:has-text("Drag & drop your PDF file")');
+    await page.click('span:has-text("Drag & drop your PDF file")', { force: true });
     const fileChooser = await fileChooserPromise;
     
     // We upload a mock PDF file name (actual upload will mock-fail or succeed depending on backend status)
