@@ -18,11 +18,12 @@ export const SemanticSearch: React.FC = () => {
   })
 
   // Fetch search results
-  const { data: results = [], isLoading, isError } = useQuery({
+  const { data: rawResults, isLoading, isError } = useQuery({
     queryKey: ["search", triggerQuery, docFilter],
     queryFn: () => api.search(triggerQuery, docFilter),
     enabled: !!triggerQuery,
   })
+  const results = rawResults || []
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
@@ -67,7 +68,7 @@ export const SemanticSearch: React.FC = () => {
             id="search-query-input"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search details, e.g. 'What is the binding margin recommended?'..."
+            placeholder="Type a search query..."
             className="pl-10 py-5 bg-zinc-950/40 border-zinc-800"
             aria-label="Search query"
           />

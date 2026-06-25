@@ -34,7 +34,7 @@ export const Dashboard: React.FC = () => {
   const [pollingBookletId, setPollingBookletId] = useState<string | null>(null)
 
   // 1. Fetch document list
-  const { data: documents = [], isLoading: loadingDocs, refetch: refetchDocs } = useQuery({
+  const { data: rawDocuments, isLoading: loadingDocs, refetch: refetchDocs } = useQuery({
     queryKey: ["documents"],
     queryFn: api.listDocuments,
     refetchInterval: (query) => {
@@ -43,6 +43,7 @@ export const Dashboard: React.FC = () => {
       return hasProcessing ? 2000 : false
     }
   })
+  const documents = rawDocuments || []
 
   // 2. Fetch selected document details
   const { data: docDetail, isLoading: loadingDocDetail } = useQuery({
