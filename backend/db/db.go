@@ -81,6 +81,8 @@ func runMigrations() error {
 			id UUID PRIMARY KEY,
 			name TEXT NOT NULL,
 			total_pages INT NOT NULL,
+			split_pages INT DEFAULT 0,
+			parsed_pages INT DEFAULT 0,
 			status TEXT NOT NULL,
 			is_dismissed BOOLEAN DEFAULT FALSE,
 			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -93,6 +95,8 @@ func runMigrations() error {
 
 	// Add is_dismissed column if it doesn't exist for compatibility
 	_, _ = DB.Exec(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS is_dismissed BOOLEAN DEFAULT FALSE;`)
+	_, _ = DB.Exec(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS split_pages INT DEFAULT 0;`)
+	_, _ = DB.Exec(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS parsed_pages INT DEFAULT 0;`)
 
 	// 3. Document Pages Table (using 384 dimensions for all-minilm embeddings by default)
 	log.Println("Creating document_pages table...")
@@ -170,7 +174,7 @@ func Float32ArrayToString(slice []float32) string {
 	return "[" + strings.Join(strVals, ",") + "]"
 }
 
-// FailStaleProcessingDocuments marks all documents in 'processing' status and compiled booklets in 'compiling' status as 'failed'.
+// FailStaleProcessingDocuments marks all documents in 'processing' or 'queued' status and compiled booklets in 'compiling' status as 'failed'.
 func FailStaleProcessingDocuments() error {
 	log.Println("Cleaning up stale background processes from database...")
 	
@@ -178,7 +182,7 @@ func FailStaleProcessingDocuments() error {
 	res, err := DB.Exec(`
 		UPDATE documents 
 		SET status = 'failed', updated_at = CURRENT_TIMESTAMP 
-		WHERE status = 'processing'
+		WHERE status = 'processing' OR status = 'queued'
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to clean up stale documents: %w", err)
