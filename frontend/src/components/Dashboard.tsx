@@ -61,8 +61,8 @@ export const Dashboard: React.FC = () => {
     queryKey: ["documents"],
     queryFn: api.listDocuments,
     refetchInterval: (query) => {
-      // Poll if any document is processing
-      const hasProcessing = query.state.data?.some(d => d.status === "processing")
+      // Poll if any document is processing or queued
+      const hasProcessing = query.state.data?.some(d => d.status === "processing" || d.status === "queued")
       return hasProcessing ? 2000 : false
     }
   })
@@ -74,40 +74,54 @@ export const Dashboard: React.FC = () => {
     queryFn: () => api.getDocument(selectedDocId!),
     enabled: !!selectedDocId,
     refetchInterval: (query) => {
-      // Poll if this document is processing
-      return query.state.data?.status === "processing" ? 2000 : false
+      // Poll if this document is processing or queued
+      const status = query.state.data?.status
+      return (status === "processing" || status === "queued") ? 2000 : false
     }
   })
 
-  // 3. Upload Mutation
-  const [uploadProgress, setUploadProgress] = useState<string>("")
-  const uploadMutation = useMutation({
-    mutationFn: api.uploadDocument,
-    onSuccess: (data, file) => {
-      queryClient.invalidateQueries({ queryKey: ["documents"] })
-      setUploadProgress("")
-      setPendingUploads((current) => [
-        ...current,
-        {
-          documentId: data.document_id,
-          fileName: file.name,
-          startedAt: Date.now(),
-        },
-      ])
-    },
-    onError: (err: unknown, file) => {
-      const message = err instanceof Error ? err.message : "Upload failed"
-      setUploadProgress("")
-      setFailedUploads((current) => [
-        ...current,
-        {
-          id: `request-${Date.now()}-${file.name}`,
-          fileName: file.name,
-          message,
-        },
-      ])
-    }
-  })
+  // 3. Upload State and Helpers
+  const [inFlightUploads, setInFlightUploads] = useState<{ id: string; fileName: string }[]>([])
+
+  const handleUploadFiles = async (files: FileList) => {
+    const fileArray = Array.from(files).filter(f => f.name.toLowerCase().endsWith(".pdf"))
+    if (fileArray.length === 0) return
+
+    const newInFlight = fileArray.map(file => ({
+      id: `inflight-${Date.now()}-${file.name}-${Math.random().toString(36).substring(2, 9)}`,
+      fileName: file.name,
+      file,
+    }))
+
+    setInFlightUploads((current) => [...current, ...newInFlight.map(item => ({ id: item.id, fileName: item.fileName }))])
+
+    newInFlight.forEach(async (item) => {
+      try {
+        const data = await api.uploadDocument(item.file)
+        setInFlightUploads((current) => current.filter(x => x.id !== item.id))
+        setPendingUploads((current) => [
+          ...current,
+          {
+            documentId: data.document_id,
+            fileName: item.fileName,
+            startedAt: Date.now(),
+          },
+        ])
+        queryClient.invalidateQueries({ queryKey: ["documents"] })
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Upload failed"
+        setInFlightUploads((current) => current.filter(x => x.id !== item.id))
+        setFailedUploads((current) => [
+          ...current,
+          {
+            id: `request-${Date.now()}-${item.fileName}`,
+            fileName: item.fileName,
+            message,
+          },
+        ])
+      }
+    })
+  }
 
   useEffect(() => {
     if (pendingUploads.length === 0) return
@@ -134,6 +148,36 @@ export const Dashboard: React.FC = () => {
           message: "Upload failed while the backend was processing the PDF.",
         })
         return false
+      }
+
+      if (document.status === "queued") {
+        // Queued timeout is 15 minutes to allow for large queues
+        const start = new Date(document.updated_at || document.created_at).getTime()
+        if (now - start > 15 * 60 * 1000) {
+          resolvedFailures.push({
+            id: `timeout-${pending.documentId}`,
+            documentId: pending.documentId,
+            fileName: pending.fileName,
+            message: "Upload stalled in queue. The backend may have crashed or is overloaded.",
+          })
+          return false
+        }
+        return true
+      }
+
+      if (document.status === "processing") {
+        // Processing timeout is UPLOAD_FAILURE_TIMEOUT_MS (60s) of inactivity (no update to updated_at)
+        const lastActive = new Date(document.updated_at || document.created_at).getTime()
+        if (now - lastActive > UPLOAD_FAILURE_TIMEOUT_MS) {
+          resolvedFailures.push({
+            id: `timeout-${pending.documentId}`,
+            documentId: pending.documentId,
+            fileName: pending.fileName,
+            message: "Upload stalled while processing. The backend may have crashed.",
+          })
+          return false
+        }
+        return true
       }
 
       if (now - pending.startedAt > UPLOAD_FAILURE_TIMEOUT_MS) {
@@ -183,10 +227,9 @@ export const Dashboard: React.FC = () => {
 
   // Handle file drop/selection
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) {
-      setUploadProgress("Uploading and parsing PDF...")
-      uploadMutation.mutate(file)
+    const files = e.target.files
+    if (files && files.length > 0) {
+      handleUploadFiles(files)
     }
   }
 
@@ -266,22 +309,26 @@ export const Dashboard: React.FC = () => {
 
           <div className="relative border-2 border-dashed border-border rounded-xl p-8 flex flex-col items-center justify-center gap-2 hover:border-primary/50 transition-all bg-background/40 group">
             <UploadCloud className="h-10 w-10 text-muted-foreground group-hover:text-primary transition-colors" aria-hidden="true" />
-            <span className="text-muted-foreground text-xs font-medium">Drag & drop your PDF file or click to browse</span>
+            <span className="text-muted-foreground text-xs font-medium">Drag & drop your PDF file(s) or click to browse</span>
             <Input
               id="pdf-file-upload"
               type="file"
               accept=".pdf"
+              multiple={true}
               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
               onChange={handleFileChange}
-              disabled={uploadMutation.isPending}
-              aria-label="Upload PDF document"
+              aria-label="Upload PDF documents"
             />
           </div>
 
-          {uploadProgress && (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/60 p-3 rounded-lg border border-border">
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" aria-hidden="true" />
-              <span>{uploadProgress}</span>
+          {inFlightUploads.length > 0 && (
+            <div className="space-y-2">
+              {inFlightUploads.map((upload) => (
+                <div key={upload.id} className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/60 p-3 rounded-lg border border-border">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" aria-hidden="true" />
+                  <span className="truncate">Uploading {upload.fileName}...</span>
+                </div>
+              ))}
             </div>
           )}
 
@@ -369,7 +416,7 @@ export const Dashboard: React.FC = () => {
                       disabled={doc.status !== "ready"}
                       className={`w-full text-left h-auto p-3.5 rounded-xl border flex items-center justify-between gap-4 cursor-pointer transition-all whitespace-normal ${isSelected
                           ? "bg-primary/10 border-primary/30"
-                          : effectiveStatus === "processing"
+                          : (effectiveStatus === "processing" || effectiveStatus === "queued")
                             ? "bg-muted/30 border-border opacity-60 cursor-not-allowed"
                             : "bg-background/60 border-border hover:border-primary/25"
                         }`}
@@ -380,12 +427,20 @@ export const Dashboard: React.FC = () => {
                         </div>
                         <div className="min-w-0">
                           <h4 className="text-xs font-bold text-foreground truncate m-0">{doc.name}</h4>
-                          <p className="text-[10px] text-muted-foreground mt-0.5">{doc.total_pages} pages</p>
+                          <p className="text-[10px] text-muted-foreground mt-0.5">
+                            {doc.status === "queued" 
+                              ? "Queued..." 
+                              : doc.status === "processing" 
+                                ? doc.split_pages < doc.total_pages
+                                  ? `Splitting (${doc.split_pages}/${doc.total_pages} pages)...`
+                                  : `Parsing (${doc.parsed_pages}/${doc.total_pages} pages)...` 
+                                : `${doc.total_pages} pages`}
+                          </p>
                         </div>
                       </div>
 
                       <div>
-                        {effectiveStatus === "processing" ? (
+                        {(effectiveStatus === "processing" || effectiveStatus === "queued") ? (
                           <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden="true" />
                         ) : effectiveStatus === "failed" ? (
                           <AlertCircle className="h-4 w-4 text-destructive" aria-hidden="true" />

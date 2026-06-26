@@ -15,8 +15,11 @@ export interface DocumentInfo {
   id: string;
   name: string;
   total_pages: number;
-  status: "processing" | "ready" | "failed";
+  split_pages: number;
+  parsed_pages: number;
+  status: "queued" | "processing" | "ready" | "failed";
   created_at: string;
+  updated_at: string;
 }
 
 export interface PageDetail {
