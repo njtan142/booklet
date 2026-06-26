@@ -17,6 +17,7 @@ import (
 
 	"booklet/db"
 	"booklet/embeddings"
+	"booklet/logger"
 	"booklet/metrics"
 	"booklet/pdf"
 	"booklet/storage"
@@ -74,13 +75,15 @@ type DocumentResponse struct {
 
 func HandleListDocuments(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
+		logger.Logf(r.Context(), "HandleListDocuments: method %s not allowed", r.Method)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
+	logger.Logf(r.Context(), "HandleListDocuments: querying database for active documents")
 	rows, err := db.DB.Query(`SELECT id, name, total_pages, status, created_at FROM documents WHERE is_dismissed = FALSE ORDER BY created_at DESC`)
 	if err != nil {
-		log.Printf("Error: failed to query documents list: %v", err)
+		logger.Logf(r.Context(), "Error: failed to query documents list: %v", err)
 		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -91,7 +94,7 @@ func HandleListDocuments(w http.ResponseWriter, r *http.Request) {
 		var d DocumentResponse
 		var id string
 		if err := rows.Scan(&id, &d.Name, &d.TotalPages, &d.Status, &d.CreatedAt); err != nil {
-			log.Printf("Error: failed to scan document row: %v", err)
+			logger.Logf(r.Context(), "Error: failed to scan document row: %v", err)
 			http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -99,6 +102,7 @@ func HandleListDocuments(w http.ResponseWriter, r *http.Request) {
 		docs = append(docs, d)
 	}
 
+	logger.Logf(r.Context(), "HandleListDocuments: successfully retrieved %d active documents", len(docs))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(docs)
 }
@@ -117,35 +121,41 @@ type DocumentDetailResponse struct {
 
 func HandleDismissDocument(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
+		logger.Logf(r.Context(), "HandleDismissDocument: method %s not allowed", r.Method)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	docID := r.PathValue("id")
+	logger.Logf(r.Context(), "HandleDismissDocument: request to dismiss docID=%s", docID)
 	if _, err := uuid.Parse(docID); err != nil {
+		logger.Logf(r.Context(), "HandleDismissDocument: invalid UUID format: %s", docID)
 		http.Error(w, "invalid UUID format", http.StatusBadRequest)
 		return
 	}
 
 	_, err := db.DB.Exec(`UPDATE documents SET is_dismissed = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = $1`, docID)
 	if err != nil {
-		log.Printf("Error: failed to dismiss document %s: %v", docID, err)
+		logger.Logf(r.Context(), "Error: failed to dismiss document %s: %v", docID, err)
 		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	log.Printf("Document %s dismissed successfully", docID)
+	logger.Logf(r.Context(), "Document %s dismissed successfully", docID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func HandleGetDocument(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
+		logger.Logf(r.Context(), "HandleGetDocument: method %s not allowed", r.Method)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	docID := r.PathValue("id")
+	logger.Logf(r.Context(), "HandleGetDocument: fetching document docID=%s", docID)
 	if _, err := uuid.Parse(docID); err != nil {
+		logger.Logf(r.Context(), "HandleGetDocument: invalid UUID format: %s", docID)
 		http.Error(w, "invalid UUID format", http.StatusBadRequest)
 		return
 	}
@@ -157,16 +167,17 @@ func HandleGetDocument(w http.ResponseWriter, r *http.Request) {
 		FROM documents WHERE id = $1`, docID).Scan(&id, &d.Name, &d.TotalPages, &d.Status, &d.CreatedAt)
 	
 	if err == sql.ErrNoRows {
-		log.Printf("GetDocument: document %s not found", docID)
+		logger.Logf(r.Context(), "GetDocument: document %s not found", docID)
 		http.Error(w, "document not found", http.StatusNotFound)
 		return
 	} else if err != nil {
-		log.Printf("Error: failed to query document %s: %v", docID, err)
+		logger.Logf(r.Context(), "Error: failed to query document %s: %v", docID, err)
 		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	d.ID = id
 
+	logger.Logf(r.Context(), "HandleGetDocument: query metadata success, fetching pages for document %s", docID)
 	// Fetch pages details
 	rows, err := db.DB.Query(`
 		SELECT page_number, text_content, width, height 
@@ -175,7 +186,7 @@ func HandleGetDocument(w http.ResponseWriter, r *http.Request) {
 		ORDER BY page_number ASC`, docID)
 	
 	if err != nil {
-		log.Printf("Error: failed to query pages for document %s: %v", docID, err)
+		logger.Logf(r.Context(), "Error: failed to query pages for document %s: %v", docID, err)
 		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -185,7 +196,7 @@ func HandleGetDocument(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var p DocumentPageDetail
 		if err := rows.Scan(&p.PageNumber, &p.Text, &p.Width, &p.Height); err != nil {
-			log.Printf("Error: failed to scan page row for document %s: %v", docID, err)
+			logger.Logf(r.Context(), "Error: failed to scan page row for document %s: %v", docID, err)
 			http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -197,25 +208,31 @@ func HandleGetDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	d.Pages = pages
 
+	logger.Logf(r.Context(), "HandleGetDocument: returning document details with %d pages", len(pages))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(d)
 }
 
 func HandleGetPagePDF(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
+		logger.Logf(r.Context(), "HandleGetPagePDF: method %s not allowed", r.Method)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	docID := r.PathValue("id")
+	pageNumStr := r.PathValue("page_number")
+	logger.Logf(r.Context(), "HandleGetPagePDF: request page docID=%s pageNum=%s", docID, pageNumStr)
+
 	if _, err := uuid.Parse(docID); err != nil {
+		logger.Logf(r.Context(), "HandleGetPagePDF: invalid UUID format: %s", docID)
 		http.Error(w, "invalid UUID format", http.StatusBadRequest)
 		return
 	}
 
-	pageNumStr := r.PathValue("page_number")
 	pageNum, err := strconv.Atoi(pageNumStr)
 	if err != nil || pageNum < 1 {
+		logger.Logf(r.Context(), "HandleGetPagePDF: invalid page number: %s", pageNumStr)
 		http.Error(w, "invalid page number", http.StatusBadRequest)
 		return
 	}
@@ -228,19 +245,21 @@ func HandleGetPagePDF(w http.ResponseWriter, r *http.Request) {
 		WHERE document_id = $1 AND page_number = $2`, docID, pageNum).Scan(&storagePath)
 	
 	if err == sql.ErrNoRows {
+		logger.Logf(r.Context(), "HandleGetPagePDF: page %d of document %s not found in DB", pageNum, docID)
 		http.Error(w, "page not found", http.StatusNotFound)
 		return
 	} else if err != nil {
-		log.Printf("Error: failed to query page PDF %s/%d: %v", docID, pageNum, err)
+		logger.Logf(r.Context(), "Error: failed to query page PDF %s/%d: %v", docID, pageNum, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	logger.Logf(r.Context(), "HandleGetPagePDF: fetching storagePath=%s from MinIO", storagePath)
 	// Get file from MinIO and stream it
 	ctx := r.Context()
 	object, err := storage.MinioClient.GetObject(ctx, storage.BucketName, storagePath, minio.GetObjectOptions{})
 	if err != nil {
-		log.Printf("Error: failed to get page PDF from MinIO: %v", err)
+		logger.Logf(r.Context(), "Error: failed to get page PDF from MinIO: %v", err)
 		http.Error(w, "failed to read page from storage", http.StatusInternalServerError)
 		return
 	}
@@ -248,23 +267,27 @@ func HandleGetPagePDF(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/pdf")
 	w.Header().Set("Content-Disposition", "inline")
-	if _, err := io.Copy(w, object); err != nil {
-		log.Printf("Error: failed to stream page PDF: %v", err)
+	n, err := io.Copy(w, object)
+	if err != nil {
+		logger.Logf(r.Context(), "Error: failed to stream page PDF: %v", err)
+	} else {
+		logger.Logf(r.Context(), "HandleGetPagePDF: successfully streamed %d bytes of page PDF", n)
 	}
 }
 
 func HandleGetBookletPreviewPDF(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
+		logger.Logf(r.Context(), "HandleGetBookletPreviewPDF: method %s not allowed", r.Method)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	docID := r.PathValue("id")
 	startTime := time.Now()
-	log.Printf("[HandleGetBookletPreviewPDF] Received preview request for docID=%s", docID)
+	logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Received preview request for docID=%s", docID)
 
 	if _, err := uuid.Parse(docID); err != nil {
-		log.Printf("[HandleGetBookletPreviewPDF] Invalid UUID format: %s", docID)
+		logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Invalid UUID format: %s", docID)
 		http.Error(w, "invalid UUID format", http.StatusBadRequest)
 		return
 	}
@@ -287,22 +310,22 @@ func HandleGetBookletPreviewPDF(w http.ResponseWriter, r *http.Request) {
 		side = "front"
 	}
 
-	log.Printf("[HandleGetBookletPreviewPDF] Parsed params: margin=%.2f, gutter=%.2f, paperSize=%s, sigSize=%d, guides=%t, side=%s", 
+	logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Parsed params: margin=%.2f, gutter=%.2f, paperSize=%s, sigSize=%d, guides=%t, side=%s", 
 		margin, gutter, paperSize, sigSize, guides, side)
 
 	// Create temp directory for execution
 	tempDir, err := os.MkdirTemp("", "booklet-preview-*")
 	if err != nil {
-		log.Printf("[HandleGetBookletPreviewPDF] Error: failed to create temp dir: %v", err)
+		logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Error: failed to create temp dir: %v", err)
 		http.Error(w, "failed to create temp dir", http.StatusInternalServerError)
 		return
 	}
 	defer os.RemoveAll(tempDir)
-	log.Printf("[HandleGetBookletPreviewPDF] Created tempDir: %s", tempDir)
+	logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Created tempDir: %s", tempDir)
 
 	// Fetch page records for first signature (page_number <= sigSize)
 	ctx := r.Context()
-	log.Printf("[HandleGetBookletPreviewPDF] Querying document pages from DB (page_number <= %d)", sigSize)
+	logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Querying document pages from DB (page_number <= %d)", sigSize)
 	rows, err := db.DB.Query(`
 		SELECT page_number, storage_path, width, height 
 		FROM document_pages 
@@ -310,7 +333,7 @@ func HandleGetBookletPreviewPDF(w http.ResponseWriter, r *http.Request) {
 		ORDER BY page_number ASC`, docID, sigSize)
 	
 	if err != nil {
-		log.Printf("[HandleGetBookletPreviewPDF] Error: failed to query pages for preview: %v", err)
+		logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Error: failed to query pages for preview: %v", err)
 		http.Error(w, "database error", http.StatusInternalServerError)
 		return
 	}
@@ -320,17 +343,17 @@ func HandleGetBookletPreviewPDF(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var p pdf.DBPageInfo
 		if err := rows.Scan(&p.PageNumber, &p.StoragePath, &p.Width, &p.Height); err != nil {
-			log.Printf("[HandleGetBookletPreviewPDF] Error: failed to scan page info: %v", err)
+			logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Error: failed to scan page info: %v", err)
 			http.Error(w, "database error", http.StatusInternalServerError)
 			return
 		}
 		dbPages = append(dbPages, p)
 	}
 
-	log.Printf("[HandleGetBookletPreviewPDF] Found %d pages in DB for signature", len(dbPages))
+	logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Found %d pages in DB for signature", len(dbPages))
 
 	if len(dbPages) == 0 {
-		log.Printf("[HandleGetBookletPreviewPDF] Error: no pages found for document %s", docID)
+		logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Error: no pages found for document %s", docID)
 		http.Error(w, "no pages found for document", http.StatusNotFound)
 		return
 	}
@@ -340,43 +363,43 @@ func HandleGetBookletPreviewPDF(w http.ResponseWriter, r *http.Request) {
 	var localPagePaths []string
 	for _, dbPage := range dbPages {
 		localPath := filepath.Join(tempDir, fmt.Sprintf("page_%d.pdf", dbPage.PageNumber))
-		log.Printf("[HandleGetBookletPreviewPDF] Downloading storagePath=%s -> localPath=%s", dbPage.StoragePath, localPath)
+		logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Downloading storagePath=%s -> localPath=%s", dbPage.StoragePath, localPath)
 		err := storage.DownloadFile(ctx, dbPage.StoragePath, localPath)
 		if err != nil {
-			log.Printf("[HandleGetBookletPreviewPDF] Error: failed to download page %d: %v", dbPage.PageNumber, err)
+			logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Error: failed to download page %d: %v", dbPage.PageNumber, err)
 			http.Error(w, "failed to download pages", http.StatusInternalServerError)
 			return
 		}
 		
 		info, err := os.Stat(localPath)
 		if err == nil {
-			log.Printf("[HandleGetBookletPreviewPDF] Downloaded page %d successfully. Size: %d bytes", dbPage.PageNumber, info.Size())
+			logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Downloaded page %d successfully. Size: %d bytes", dbPage.PageNumber, info.Size())
 		}
 		localPagePaths = append(localPagePaths, localPath)
 	}
-	log.Printf("[HandleGetBookletPreviewPDF] Finished downloading all pages in %s", time.Since(downloadStart))
+	logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Finished downloading all pages in %s", time.Since(downloadStart))
 
 	// Merge files safely
 	mergeStart := time.Now()
-	log.Printf("[HandleGetBookletPreviewPDF] Merging %d files safely...", len(localPagePaths))
+	logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Merging %d files safely...", len(localPagePaths))
 	tempMergedPath, err := pdf.MergeFilesSafe(localPagePaths, tempDir)
 	if err != nil {
-		log.Printf("[HandleGetBookletPreviewPDF] Error: failed to merge pages: %v", err)
+		logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Error: failed to merge pages: %v", err)
 		http.Error(w, "failed to merge pages", http.StatusInternalServerError)
 		return
 	}
 	
 	mergedInfo, err := os.Stat(tempMergedPath)
 	if err == nil {
-		log.Printf("[HandleGetBookletPreviewPDF] Merged PDF created at %s, size: %d bytes (took %s)", tempMergedPath, mergedInfo.Size(), time.Since(mergeStart))
+		logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Merged PDF created at %s, size: %d bytes (took %s)", tempMergedPath, mergedInfo.Size(), time.Since(mergeStart))
 	} else {
-		log.Printf("[HandleGetBookletPreviewPDF] Merged PDF created at %s (took %s)", tempMergedPath, time.Since(mergeStart))
+		logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Merged PDF created at %s (took %s)", tempMergedPath, time.Since(mergeStart))
 	}
 
 	// Calculate layout sheets
 	sheets := pdf.CalculateBookletLayout(len(dbPages), sigSize)
 	if len(sheets) == 0 {
-		log.Printf("[HandleGetBookletPreviewPDF] Error: calculated layout has 0 sheets")
+		logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Error: calculated layout has 0 sheets")
 		http.Error(w, "invalid booklet layout", http.StatusInternalServerError)
 		return
 	}
@@ -392,7 +415,7 @@ func HandleGetBookletPreviewPDF(w http.ResponseWriter, r *http.Request) {
 		targetSheet = sheets[0]
 	}
 
-	log.Printf("[HandleGetBookletPreviewPDF] Target sheet pages: LeftPage=%d, RightPage=%d", targetSheet.LeftPage, targetSheet.RightPage)
+	logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Target sheet pages: LeftPage=%d, RightPage=%d", targetSheet.LeftPage, targetSheet.RightPage)
 
 	// Create new PDF document using gopdf
 	pdfDoc := gopdf.GoPdf{}
@@ -457,13 +480,13 @@ func HandleGetBookletPreviewPDF(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := drawPageInSlot(targetSheet.LeftPage, false); err != nil {
-		log.Printf("[HandleGetBookletPreviewPDF] Error: failed to draw left page: %v", err)
+		logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Error: failed to draw left page: %v", err)
 		http.Error(w, "failed to compile preview sheet", http.StatusInternalServerError)
 		return
 	}
 
 	if err := drawPageInSlot(targetSheet.RightPage, true); err != nil {
-		log.Printf("[HandleGetBookletPreviewPDF] Error: failed to draw right page: %v", err)
+		logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Error: failed to draw right page: %v", err)
 		http.Error(w, "failed to compile preview sheet", http.StatusInternalServerError)
 		return
 	}
@@ -480,22 +503,22 @@ func HandleGetBookletPreviewPDF(w http.ResponseWriter, r *http.Request) {
 	localFilteredPath := filepath.Join(tempDir, "preview_sheet.pdf")
 	err = pdfDoc.WritePdf(localFilteredPath)
 	if err != nil {
-		log.Printf("[HandleGetBookletPreviewPDF] Error: failed to write preview PDF: %v", err)
+		logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Error: failed to write preview PDF: %v", err)
 		http.Error(w, "failed to write preview sheet", http.StatusInternalServerError)
 		return
 	}
 	
 	filteredInfo, err := os.Stat(localFilteredPath)
 	if err == nil {
-		log.Printf("[HandleGetBookletPreviewPDF] Slice extraction complete: %s, size: %d bytes (took %s)", localFilteredPath, filteredInfo.Size(), time.Since(startTime))
+		logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Slice extraction complete: %s, size: %d bytes (took %s)", localFilteredPath, filteredInfo.Size(), time.Since(startTime))
 	} else {
-		log.Printf("[HandleGetBookletPreviewPDF] Slice extraction complete: %s (took %s)", localFilteredPath, time.Since(startTime))
+		logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Slice extraction complete: %s (took %s)", localFilteredPath, time.Since(startTime))
 	}
 
 	// Stream back
 	f, err := os.Open(localFilteredPath)
 	if err != nil {
-		log.Printf("[HandleGetBookletPreviewPDF] Error: failed to open filtered file: %v", err)
+		logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Error: failed to open filtered file: %v", err)
 		http.Error(w, "failed to read preview sheet", http.StatusInternalServerError)
 		return
 	}
@@ -504,38 +527,40 @@ func HandleGetBookletPreviewPDF(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/pdf")
 	w.Header().Set("Content-Disposition", "inline")
 	if _, err := io.Copy(w, f); err != nil {
-		log.Printf("[HandleGetBookletPreviewPDF] Error: failed to stream preview PDF bytes: %v", err)
+		logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Error: failed to stream preview PDF bytes: %v", err)
 	}
-	log.Printf("[HandleGetBookletPreviewPDF] Preview PDF streamed successfully. Total elapsed handler time: %s", time.Since(startTime))
+	logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Preview PDF streamed successfully. Total elapsed handler time: %s", time.Since(startTime))
 }
 
 func HandleUploadDocument(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
+		logger.Logf(r.Context(), "HandleUploadDocument: method %s not allowed", r.Method)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	// 32 MB max memory for parsing form
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		log.Printf("Error: failed to parse multipart form for upload: %v", err)
+		logger.Logf(r.Context(), "Error: failed to parse multipart form for upload: %v", err)
 		http.Error(w, "failed to parse multipart form", http.StatusBadRequest)
 		return
 	}
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		log.Printf("Error: missing file in upload request: %v", err)
+		logger.Logf(r.Context(), "Error: missing file in upload request: %v", err)
 		http.Error(w, "missing file in form-data", http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
 
 	docID := uuid.New()
+	logger.Logf(r.Context(), "HandleUploadDocument: starting upload for file=%s (docID=%s)", header.Filename, docID)
 	
 	// Create local temp file to inspect PDF page count and perform split
 	tempDir, err := os.MkdirTemp("", "booklet-upload-*")
 	if err != nil {
-		log.Printf("Error: failed to create temp dir for upload: %v", err)
+		logger.Logf(r.Context(), "Error: failed to create temp dir for upload: %v", err)
 		http.Error(w, "failed to create temp dir", http.StatusInternalServerError)
 		return
 	}
@@ -545,7 +570,7 @@ func HandleUploadDocument(w http.ResponseWriter, r *http.Request) {
 	outField, err := os.Create(localPath)
 	if err != nil {
 		os.RemoveAll(tempDir)
-		log.Printf("Error: failed to create temp file %s: %v", localPath, err)
+		logger.Logf(r.Context(), "Error: failed to create temp file %s: %v", localPath, err)
 		http.Error(w, "failed to create temp file", http.StatusInternalServerError)
 		return
 	}
@@ -553,7 +578,7 @@ func HandleUploadDocument(w http.ResponseWriter, r *http.Request) {
 	if _, err := io.Copy(outField, file); err != nil {
 		outField.Close()
 		os.RemoveAll(tempDir)
-		log.Printf("Error: failed to save uploaded file to %s: %v", localPath, err)
+		logger.Logf(r.Context(), "Error: failed to save uploaded file to %s: %v", localPath, err)
 		http.Error(w, "failed to save uploaded file", http.StatusInternalServerError)
 		return
 	}
@@ -567,13 +592,14 @@ func HandleUploadDocument(w http.ResponseWriter, r *http.Request) {
 	
 	if err != nil {
 		os.RemoveAll(tempDir)
-		log.Printf("Error: failed to insert document %s metadata into database: %v", docID, err)
+		logger.Logf(r.Context(), "Error: failed to insert document %s metadata into database: %v", docID, err)
 		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	metrics.DocumentUploadsTotal.With(prometheus.Labels{"status": "processing"}).Inc()
 
+	logger.Logf(r.Context(), "HandleUploadDocument: metadata inserted, starting background processing worker")
 	// Spawn background worker to split pages, extract text, upload to MinIO and generate embeddings
 	go runBackgroundDocumentProcessing(docID, localPath, tempDir)
 
@@ -586,33 +612,40 @@ func HandleUploadDocument(w http.ResponseWriter, r *http.Request) {
 }
 
 func runBackgroundDocumentProcessing(docID uuid.UUID, localPath string, tempDir string) {
-	defer os.RemoveAll(tempDir)
+	start := time.Now()
+	rl := logger.NewRequestLogger()
+	ctx := logger.WithLogger(context.Background(), rl)
+	success := false
+
 	defer func() {
+		duration := time.Since(start)
+		rl.PrintTask(fmt.Sprintf("Document Processing (docID=%s)", docID), duration, success)
+		os.RemoveAll(tempDir)
 		if recovered := recover(); recovered != nil {
-			log.Printf("panic: background processing crashed for document %s: %v", docID, recovered)
+			rl.Logf("panic: background processing crashed for document %s: %v", docID, recovered)
+			rl.PrintTask(fmt.Sprintf("Document Processing (docID=%s)", docID), time.Since(start), false)
 			updateDocStatus(docID, "failed")
 			metrics.DocumentUploadsTotal.With(prometheus.Labels{"status": "failed"}).Inc()
 		}
 	}()
 
-	ctx := context.Background()
-	log.Printf("Background processing started for document: %s (%s)", localPath, docID)
+	rl.Logf("Background processing started for document: %s (%s)", localPath, docID)
 
 	pages, err := pdf.SplitDocument(ctx, docID.String(), localPath)
 	if err != nil {
-		log.Printf("Error: failed to split document %s: %v", docID, err)
+		rl.Logf("Error: failed to split document %s: %v", docID, err)
 		updateDocStatus(docID, "failed")
 		metrics.DocumentUploadsTotal.With(prometheus.Labels{"status": "failed"}).Inc()
 		return
 	}
 
 	totalPages := len(pages)
-	log.Printf("Split complete. %d pages found for document %s.", totalPages, docID)
+	rl.Logf("Split complete. %d pages found for document %s.", totalPages, docID)
 
 	// Update total page count in database
 	_, err = db.DB.Exec(`UPDATE documents SET total_pages = $1 WHERE id = $2`, totalPages, docID)
 	if err != nil {
-		log.Printf("Error: failed to update page count for %s: %v", docID, err)
+		rl.Logf("Error: failed to update page count for %s: %v", docID, err)
 		updateDocStatus(docID, "failed")
 		return
 	}
@@ -622,7 +655,7 @@ func runBackgroundDocumentProcessing(docID uuid.UUID, localPath string, tempDir 
 		objectName := fmt.Sprintf("documents/%s/pages/page_%d.pdf", docID, page.PageNumber)
 		err = storage.UploadFile(ctx, objectName, page.LocalPath, "application/pdf")
 		if err != nil {
-			log.Printf("Error: failed to upload page %d of %s to MinIO: %v", page.PageNumber, docID, err)
+			rl.Logf("Error: failed to upload page %d of %s to MinIO: %v", page.PageNumber, docID, err)
 			updateDocStatus(docID, "failed")
 			metrics.DocumentUploadsTotal.With(prometheus.Labels{"status": "failed"}).Inc()
 			return
@@ -631,7 +664,7 @@ func runBackgroundDocumentProcessing(docID uuid.UUID, localPath string, tempDir 
 		// Generate embedding
 		embeddingVec, err := embeddings.ActiveEmbedder.Embed(ctx, page.Text)
 		if err != nil {
-			log.Printf("Warning: failed to generate embedding for page %d of %s: %v", page.PageNumber, docID, err)
+			rl.Logf("Warning: failed to generate embedding for page %d of %s: %v", page.PageNumber, docID, err)
 			// Proceed with empty embedding instead of failing
 			embeddingVec = make([]float32, embeddings.ActiveEmbedder.Dimension())
 		}
@@ -646,7 +679,7 @@ func runBackgroundDocumentProcessing(docID uuid.UUID, localPath string, tempDir 
 			pageID, docID, page.PageNumber, page.Text, embeddingStr, objectName, page.Width, page.Height)
 
 		if err != nil {
-			log.Printf("Error: failed to save page %d metadata for %s: %v", page.PageNumber, docID, err)
+			rl.Logf("Error: failed to save page %d metadata for %s: %v", page.PageNumber, docID, err)
 			updateDocStatus(docID, "failed")
 			metrics.DocumentUploadsTotal.With(prometheus.Labels{"status": "failed"}).Inc()
 			return
@@ -655,7 +688,8 @@ func runBackgroundDocumentProcessing(docID uuid.UUID, localPath string, tempDir 
 
 	updateDocStatus(docID, "ready")
 	metrics.DocumentUploadsTotal.With(prometheus.Labels{"status": "success"}).Inc()
-	log.Printf("Background processing completed successfully for document: %s", docID)
+	rl.Logf("Background processing completed successfully for document: %s", docID)
+	success = true
 }
 
 func updateDocStatus(id uuid.UUID, status string) {
@@ -684,19 +718,22 @@ type BookletResponse struct {
 
 func HandleCompileBooklet(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
+		logger.Logf(r.Context(), "HandleCompileBooklet: method %s not allowed", r.Method)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	docID := r.PathValue("id")
+	logger.Logf(r.Context(), "HandleCompileBooklet: request compilation for docID=%s", docID)
 	if _, err := uuid.Parse(docID); err != nil {
+		logger.Logf(r.Context(), "HandleCompileBooklet: invalid UUID format: %s", docID)
 		http.Error(w, "invalid UUID format", http.StatusBadRequest)
 		return
 	}
 
 	var req BookletCompileRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Printf("Error: failed to decode booklet compile request JSON: %v", err)
+		logger.Logf(r.Context(), "Error: failed to decode booklet compile request JSON: %v", err)
 		http.Error(w, "invalid JSON payload", http.StatusBadRequest)
 		return
 	}
@@ -715,21 +752,24 @@ func HandleCompileBooklet(w http.ResponseWriter, r *http.Request) {
 		req.SignatureSize = 4
 	}
 
+	logger.Logf(r.Context(), "HandleCompileBooklet: params - margin=%.2f gutter=%.2f paperSize=%s signatureSize=%d guides=%t", 
+		req.Margin, req.Gutter, req.PaperSize, req.SignatureSize, req.Guides)
+
 	// Verify document exists and is ready
 	var docStatus string
 	err := db.DB.QueryRow(`SELECT status FROM documents WHERE id = $1`, docID).Scan(&docStatus)
 	if err == sql.ErrNoRows {
-		log.Printf("CompileBooklet: document %s not found", docID)
+		logger.Logf(r.Context(), "CompileBooklet: document %s not found", docID)
 		http.Error(w, "document not found", http.StatusNotFound)
 		return
 	} else if err != nil {
-		log.Printf("Error: failed to check status for document %s during compile: %v", docID, err)
+		logger.Logf(r.Context(), "Error: failed to check status for document %s during compile: %v", docID, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	if docStatus != "ready" {
-		log.Printf("CompileBooklet: document %s is in status '%s', not ready", docID, docStatus)
+		logger.Logf(r.Context(), "CompileBooklet: document %s is in status '%s', not ready", docID, docStatus)
 		http.Error(w, "document is not ready for booklet compilation", http.StatusConflict)
 		return
 	}
@@ -750,7 +790,7 @@ func HandleCompileBooklet(w http.ResponseWriter, r *http.Request) {
 		docID, req.Margin, req.Gutter, req.PaperSize, req.SignatureSize, req.Guides).Scan(&cachedID, &cachedStatus)
 
 	if err == nil {
-		log.Printf("Found cached booklet compilation %s (status: %s) for document %s", cachedID, cachedStatus, docID)
+		logger.Logf(r.Context(), "Found cached booklet compilation %s (status: %s) for document %s", cachedID, cachedStatus, docID)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
 		json.NewEncoder(w).Encode(map[string]string{
@@ -759,22 +799,24 @@ func HandleCompileBooklet(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	} else if err != sql.ErrNoRows {
-		log.Printf("Warning: failed to query cached booklets: %v", err)
+		logger.Logf(r.Context(), "Warning: failed to query cached booklets: %v", err)
 	}
 
 	bookletID := uuid.New()
+	logger.Logf(r.Context(), "HandleCompileBooklet: inserting new compiled booklet row %s with status 'compiling'", bookletID)
 	_, err = db.DB.Exec(`
 		INSERT INTO compiled_booklets (id, document_id, status, config_margin, config_gutter, config_paper_size, config_signature_size, config_guides, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP)`,
 		bookletID, docID, "compiling", req.Margin, req.Gutter, req.PaperSize, req.SignatureSize, req.Guides)
 	
 	if err != nil {
-		log.Printf("Error: failed to insert compiled booklet %s for document %s: %v", bookletID, docID, err)
+		logger.Logf(r.Context(), "Error: failed to insert compiled booklet %s for document %s: %v", bookletID, docID, err)
 		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	// Spawn background booklet compiler
+	logger.Logf(r.Context(), "HandleCompileBooklet: starting background compiler task for bookletID=%s", bookletID)
 	go runBackgroundBookletCompilation(bookletID, docID, req)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -787,8 +829,16 @@ func HandleCompileBooklet(w http.ResponseWriter, r *http.Request) {
 
 func runBackgroundBookletCompilation(bookletID uuid.UUID, docID string, req BookletCompileRequest) {
 	start := time.Now()
-	ctx := context.Background()
-	log.Printf("Background booklet compilation started for: %s", bookletID)
+	rl := logger.NewRequestLogger()
+	ctx := logger.WithLogger(context.Background(), rl)
+	success := false
+
+	defer func() {
+		duration := time.Since(start)
+		rl.PrintTask(fmt.Sprintf("Booklet Compilation (bookletID=%s)", bookletID), duration, success)
+	}()
+
+	rl.Logf("Background booklet compilation started for: %s", bookletID)
 
 	// Fetch all document pages
 	rows, err := db.DB.Query(`
@@ -798,8 +848,8 @@ func runBackgroundBookletCompilation(bookletID uuid.UUID, docID string, req Book
 		ORDER BY page_number ASC`, docID)
 	
 	if err != nil {
-		log.Printf("Error: failed to fetch pages for booklet %s: %v", bookletID, err)
-		updateBookletStatus(bookletID, "failed", "")
+		rl.Logf("Error: failed to fetch pages for booklet %s: %v", bookletID, err)
+		updateBookletStatus(ctx, bookletID, "failed", "")
 		return
 	}
 	defer rows.Close()
@@ -808,13 +858,14 @@ func runBackgroundBookletCompilation(bookletID uuid.UUID, docID string, req Book
 	for rows.Next() {
 		var p pdf.DBPageInfo
 		if err := rows.Scan(&p.PageNumber, &p.StoragePath, &p.Width, &p.Height); err != nil {
-			log.Printf("Error: failed to scan page info for booklet %s: %v", bookletID, err)
-			updateBookletStatus(bookletID, "failed", "")
+			rl.Logf("Error: failed to scan page info for booklet %s: %v", bookletID, err)
+			updateBookletStatus(ctx, bookletID, "failed", "")
 			return
 		}
 		dbPages = append(dbPages, p)
 	}
 
+	rl.Logf("Fetched %d pages, running CompileBooklet in pdf package", len(dbPages))
 	// Run booklet compilation using GoPDF canvas layout
 	storagePath, err := pdf.CompileBooklet(ctx, dbPages, pdf.BookletConfig{
 		Margin:        req.Margin,
@@ -825,17 +876,19 @@ func runBackgroundBookletCompilation(bookletID uuid.UUID, docID string, req Book
 	})
 
 	if err != nil {
-		log.Printf("Error: booklet compilation failed for %s: %v", bookletID, err)
-		updateBookletStatus(bookletID, "failed", "")
+		rl.Logf("Error: booklet compilation failed for %s: %v", bookletID, err)
+		updateBookletStatus(ctx, bookletID, "failed", "")
 		return
 	}
 
-	updateBookletStatus(bookletID, "ready", storagePath)
+	rl.Logf("CompileBooklet complete, updating status to ready with path: %s", storagePath)
+	updateBookletStatus(ctx, bookletID, "ready", storagePath)
 	metrics.BookletCompilationDuration.Observe(time.Since(start).Seconds())
-	log.Printf("Background booklet compilation completed successfully for: %s", bookletID)
+	rl.Logf("Background booklet compilation completed successfully for: %s", bookletID)
+	success = true
 }
 
-func updateBookletStatus(id uuid.UUID, status string, storagePath string) {
+func updateBookletStatus(ctx context.Context, id uuid.UUID, status string, storagePath string) {
 	var err error
 	if storagePath != "" {
 		_, err = db.DB.Exec(`UPDATE compiled_booklets SET status = $1, storage_path = $2 WHERE id = $3`, status, storagePath, id)
@@ -843,18 +896,21 @@ func updateBookletStatus(id uuid.UUID, status string, storagePath string) {
 		_, err = db.DB.Exec(`UPDATE compiled_booklets SET status = $1 WHERE id = $2`, status, id)
 	}
 	if err != nil {
-		log.Printf("Error: failed to update booklet status for %s to %s: %v", id, status, err)
+		logger.Logf(ctx, "Error: failed to update booklet status for %s to %s: %v", id, status, err)
 	}
 }
 
 func HandleGetBooklet(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
+		logger.Logf(r.Context(), "HandleGetBooklet: method %s not allowed", r.Method)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	bookletID := r.PathValue("id")
+	logger.Logf(r.Context(), "HandleGetBooklet: request status for bookletID=%s", bookletID)
 	if _, err := uuid.Parse(bookletID); err != nil {
+		logger.Logf(r.Context(), "HandleGetBooklet: invalid UUID format: %s", bookletID)
 		http.Error(w, "invalid UUID format", http.StatusBadRequest)
 		return
 	}
@@ -865,27 +921,31 @@ func HandleGetBooklet(w http.ResponseWriter, r *http.Request) {
 		FROM compiled_booklets WHERE id = $1`, bookletID).Scan(&b.ID, &b.DocID, &b.Status, &b.CreatedAt)
 	
 	if err == sql.ErrNoRows {
-		log.Printf("GetBooklet: booklet %s not found", bookletID)
+		logger.Logf(r.Context(), "GetBooklet: booklet %s not found", bookletID)
 		http.Error(w, "booklet not found", http.StatusNotFound)
 		return
 	} else if err != nil {
-		log.Printf("Error: failed to query booklet %s: %v", bookletID, err)
+		logger.Logf(r.Context(), "Error: failed to query booklet %s: %v", bookletID, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	logger.Logf(r.Context(), "HandleGetBooklet: returned bookletID=%s status=%s", bookletID, b.Status)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(b)
 }
 
 func HandleDownloadBooklet(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
+		logger.Logf(r.Context(), "HandleDownloadBooklet: method %s not allowed", r.Method)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	bookletID := r.PathValue("id")
+	logger.Logf(r.Context(), "HandleDownloadBooklet: request download for bookletID=%s", bookletID)
 	if _, err := uuid.Parse(bookletID); err != nil {
+		logger.Logf(r.Context(), "HandleDownloadBooklet: invalid UUID format: %s", bookletID)
 		http.Error(w, "invalid UUID format", http.StatusBadRequest)
 		return
 	}
@@ -900,17 +960,17 @@ func HandleDownloadBooklet(w http.ResponseWriter, r *http.Request) {
 		JOIN documents d ON cb.document_id = d.id
 		WHERE cb.id = $1`, bookletID).Scan(&status, &storagePath, &sigSize, &totalOriginalPages, &paperSize, &docID, &margin, &gutter, &guides)
 	if err == sql.ErrNoRows {
-		log.Printf("DownloadBooklet: booklet %s not found", bookletID)
+		logger.Logf(r.Context(), "DownloadBooklet: booklet %s not found", bookletID)
 		http.Error(w, "booklet not found", http.StatusNotFound)
 		return
 	} else if err != nil {
-		log.Printf("Error: failed to query booklet %s: %v", bookletID, err)
+		logger.Logf(r.Context(), "Error: failed to query booklet %s: %v", bookletID, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	if status != "ready" {
-		log.Printf("DownloadBooklet: booklet %s is in status '%s', not ready for download", bookletID, status)
+		logger.Logf(r.Context(), "DownloadBooklet: booklet %s is in status '%s', not ready for download", bookletID, status)
 		http.Error(w, "booklet is not ready for download", http.StatusConflict)
 		return
 	}
@@ -918,6 +978,8 @@ func HandleDownloadBooklet(w http.ResponseWriter, r *http.Request) {
 	filter := r.URL.Query().Get("filter") // fronts, backs
 	sheets := r.URL.Query().Get("sheets") // e.g. 1-10 or 12
 	pagesParam := r.URL.Query().Get("pages") // booklet pages that were ruined, e.g. 13-16 or 14
+
+	logger.Logf(r.Context(), "HandleDownloadBooklet: query params - filter=%q sheets=%q pagesParam=%q", filter, sheets, pagesParam)
 
 	if pagesParam != "" {
 		startPage := 1
@@ -941,6 +1003,7 @@ func HandleDownloadBooklet(w http.ResponseWriter, r *http.Request) {
 		// Map booklet pages to physical sheet range
 		startSheet, endSheet := pdf.MapPagesToSheets(startPage, endPage)
 		sheets = fmt.Sprintf("%d-%d", startSheet, endSheet)
+		logger.Logf(r.Context(), "HandleDownloadBooklet: mapped pagesParam %s to sheet range %s", pagesParam, sheets)
 	}
 
 	ctx := r.Context()
@@ -948,6 +1011,7 @@ func HandleDownloadBooklet(w http.ResponseWriter, r *http.Request) {
 
 	// Apply filtering/slicing on-the-fly if requested
 	if filter != "" || sheets != "" {
+		logger.Logf(r.Context(), "HandleDownloadBooklet: slice requested. Slicing booklet targetPath=%s on-the-fly", targetPath)
 		// Fetch original pages from DB to compile slice
 		rows, err := db.DB.Query(`
 			SELECT page_number, storage_path, width, height 
@@ -955,7 +1019,7 @@ func HandleDownloadBooklet(w http.ResponseWriter, r *http.Request) {
 			WHERE document_id = $1
 			ORDER BY page_number ASC`, docID)
 		if err != nil {
-			log.Printf("Error: failed to query pages for booklet slice %s: %v", bookletID, err)
+			logger.Logf(r.Context(), "Error: failed to query pages for booklet slice %s: %v", bookletID, err)
 			http.Error(w, "database error", http.StatusInternalServerError)
 			return
 		}
@@ -965,7 +1029,7 @@ func HandleDownloadBooklet(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			var p pdf.DBPageInfo
 			if err := rows.Scan(&p.PageNumber, &p.StoragePath, &p.Width, &p.Height); err != nil {
-				log.Printf("Error: failed to scan page info for booklet slice %s: %v", bookletID, err)
+				logger.Logf(r.Context(), "Error: failed to scan page info for booklet slice %s: %v", bookletID, err)
 				http.Error(w, "database error", http.StatusInternalServerError)
 				return
 			}
@@ -981,11 +1045,12 @@ func HandleDownloadBooklet(w http.ResponseWriter, r *http.Request) {
 		}, filter, sheets)
 
 		if err != nil {
-			log.Printf("Error: failed to slice booklet pages for %s: %v", bookletID, err)
+			logger.Logf(r.Context(), "Error: failed to slice booklet pages for %s: %v", bookletID, err)
 			http.Error(w, "failed to slice booklet pages: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		targetPath = filteredKey
+		logger.Logf(r.Context(), "HandleDownloadBooklet: compiled slice successfully, temporary slice storage path is %s", filteredKey)
 		// Schedule clean up of temporary sliced files in MinIO after streaming
 		defer func() {
 			go func() {
@@ -996,17 +1061,15 @@ func HandleDownloadBooklet(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 
-
-
 	// Instead of redirecting directly, we download and stream the PDF to client to prevent CORS blocks
 	// or we can redirect to the presigned URL. Since MinIO might be internal in docker-compose,
 	// streaming the PDF directly from the backend is 100% reliable and SRE-friendly!
-	log.Printf("Streaming PDF booklet %s to client...", targetPath)
+	logger.Logf(r.Context(), "Streaming PDF booklet %s to client...", targetPath)
 	
 	// Create a temporary file to download to
 	tempDir, err := os.MkdirTemp("", "booklet-stream-*")
 	if err != nil {
-		log.Printf("Error: failed to create temp dir for streaming %s: %v", bookletID, err)
+		logger.Logf(r.Context(), "Error: failed to create temp dir for streaming %s: %v", bookletID, err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -1015,14 +1078,14 @@ func HandleDownloadBooklet(w http.ResponseWriter, r *http.Request) {
 	tempFile := filepath.Join(tempDir, "temp.pdf")
 	err = storage.DownloadFile(ctx, targetPath, tempFile)
 	if err != nil {
-		log.Printf("Error: failed to download booklet %s from storage: %v", bookletID, err)
+		logger.Logf(r.Context(), "Error: failed to download booklet %s from storage: %v", bookletID, err)
 		http.Error(w, "failed to stream from object store", http.StatusInternalServerError)
 		return
 	}
 
 	f, err := os.Open(tempFile)
 	if err != nil {
-		log.Printf("Error: failed to open temp file %s for streaming: %v", tempFile, err)
+		logger.Logf(r.Context(), "Error: failed to open temp file %s for streaming: %v", tempFile, err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -1036,7 +1099,12 @@ func HandleDownloadBooklet(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", strconv.FormatInt(fi.Size(), 10))
 	}
 
-	io.Copy(w, f)
+	n, err := io.Copy(w, f)
+	if err != nil {
+		logger.Logf(r.Context(), "Error: failed to stream booklet PDF bytes: %v", err)
+	} else {
+		logger.Logf(r.Context(), "HandleDownloadBooklet: successfully streamed %d bytes of booklet PDF", n)
+	}
 }
 
 // 3. Semantic Search Handler
@@ -1051,12 +1119,15 @@ type SearchResult struct {
 
 func HandleSemanticSearch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
+		logger.Logf(r.Context(), "HandleSemanticSearch: method %s not allowed", r.Method)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	query := r.URL.Query().Get("q")
+	logger.Logf(r.Context(), "HandleSemanticSearch: query=%q", query)
 	if query == "" {
+		logger.Logf(r.Context(), "HandleSemanticSearch: missing query parameter 'q'")
 		http.Error(w, "missing query parameter 'q'", http.StatusBadRequest)
 		return
 	}
@@ -1069,7 +1140,7 @@ func HandleSemanticSearch(w http.ResponseWriter, r *http.Request) {
 	// Compute embedding for search query
 	queryVec, err := embeddings.ActiveEmbedder.Embed(ctx, query)
 	if err != nil {
-		log.Printf("Error: failed to embed semantic search query: %v", err)
+		logger.Logf(r.Context(), "Error: failed to embed semantic search query: %v", err)
 		http.Error(w, "failed to embed search query: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -1093,6 +1164,7 @@ func HandleSemanticSearch(w http.ResponseWriter, r *http.Request) {
 		if _, err := uuid.Parse(docFilter); err == nil {
 			sqlQuery += " WHERE p.document_id = $2"
 			args = append(args, docFilter)
+			logger.Logf(r.Context(), "HandleSemanticSearch: filtering by document_id=%s", docFilter)
 		}
 	}
 
@@ -1100,7 +1172,7 @@ func HandleSemanticSearch(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := db.DB.Query(sqlQuery, args...)
 	if err != nil {
-		log.Printf("Error: semantic search database query failed: %v", err)
+		logger.Logf(r.Context(), "Error: semantic search database query failed: %v", err)
 		http.Error(w, "database query failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -1111,7 +1183,7 @@ func HandleSemanticSearch(w http.ResponseWriter, r *http.Request) {
 		var r SearchResult
 		var docID string
 		if err := rows.Scan(&docID, &r.DocName, &r.PageNumber, &r.Text, &r.Similarity); err != nil {
-			log.Printf("Error: failed to scan semantic search row: %v", err)
+			logger.Logf(ctx, "Error: failed to scan semantic search row: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -1133,6 +1205,7 @@ func HandleSemanticSearch(w http.ResponseWriter, r *http.Request) {
 		results = append(results, r)
 	}
 
+	logger.Logf(ctx, "HandleSemanticSearch: returned %d results", len(results))
 	metrics.VectorSearchDuration.Observe(time.Since(start).Seconds())
 
 	w.Header().Set("Content-Type", "application/json")

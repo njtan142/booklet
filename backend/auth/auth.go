@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"booklet/db"
+	"booklet/logger"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/golang-jwt/jwt/v5"
@@ -147,6 +148,7 @@ func RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cookie, err := r.Cookie(cookieName)
 		if err != nil {
+			logger.Logf(r.Context(), "RequireAuth: unauthorized access (missing session cookie)")
 			w.WriteHeader(http.StatusUnauthorized)
 			fmt.Fprint(w, `{"error":"unauthorized"}`)
 			return
@@ -154,6 +156,7 @@ func RequireAuth(next http.Handler) http.Handler {
 
 		user, err := VerifyToken(cookie.Value)
 		if err != nil {
+			logger.Logf(r.Context(), "RequireAuth: session expired or token invalid: %v", err)
 			// Clear invalid cookie
 			http.SetCookie(w, &http.Cookie{
 				Name:     cookieName,
@@ -167,6 +170,7 @@ func RequireAuth(next http.Handler) http.Handler {
 			return
 		}
 
+		logger.Logf(r.Context(), "RequireAuth: user %s (%s) authorized successfully", user.Name, user.Email)
 		ctx := context.WithValue(r.Context(), ctxUserKey, user)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
@@ -178,11 +182,13 @@ func OptionalAuth(next http.Handler) http.Handler {
 		cookie, err := r.Cookie(cookieName)
 		if err == nil {
 			if user, err := VerifyToken(cookie.Value); err == nil {
+				logger.Logf(r.Context(), "OptionalAuth: user %s (%s) detected", user.Name, user.Email)
 				ctx := context.WithValue(r.Context(), ctxUserKey, user)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
 		}
+		logger.Logf(r.Context(), "OptionalAuth: no authenticated user session detected")
 		next.ServeHTTP(w, r)
 	})
 }
@@ -196,6 +202,7 @@ func GetUser(ctx context.Context) (*User, bool) {
 
 func HandleLogin(w http.ResponseWriter, r *http.Request) {
 	if !useOIDC {
+		logger.Logf(r.Context(), "HandleLogin: OIDC authentication is not configured")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		fmt.Fprint(w, `{"error":"OIDC authentication is not configured"}`)
@@ -218,6 +225,7 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 
 	url := oauth2Config.AuthCodeURL(state)
+	logger.Logf(r.Context(), "HandleLogin: redirecting user to OIDC provider with state segment")
 	http.Redirect(w, r, url, http.StatusFound)
 }
 
@@ -228,6 +236,7 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) {
 func HandleDevLogin(w http.ResponseWriter, r *http.Request) {
 	// Double-check guard in case the handler was somehow called outside dev routing.
 	if os.Getenv("APP_ENV") != "development" {
+		logger.Logf(r.Context(), "HandleDevLogin: blocked attempt outside development mode")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
 		fmt.Fprint(w, `{"error":"developer bypass is only available in development environments"}`)
@@ -258,7 +267,7 @@ func HandleDevLogin(w http.ResponseWriter, r *http.Request) {
 		Name:  devName,
 	}
 
-	log.Printf("[DEV BYPASS] Creating session for user: id=%s email=%s", user.ID, user.Email)
+	logger.Logf(r.Context(), "[DEV BYPASS] Creating session for user: id=%s email=%s name=%s", user.ID, user.Email, user.Name)
 
 	// Detect a stale user row that shares the same email but has a different ID.
 	// This can happen when switching from the old hardcoded "usr_dev" ID scheme to
@@ -268,6 +277,7 @@ func HandleDevLogin(w http.ResponseWriter, r *http.Request) {
 	var staleID string
 	_ = db.DB.QueryRow(`SELECT id FROM users WHERE email = $1 AND id != $2`, user.Email, user.ID).Scan(&staleID)
 	if staleID != "" {
+		logger.Logf(r.Context(), "[DEV BYPASS] Conflict: email %s exists as stale ID %s", user.Email, staleID)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		fmt.Fprintf(w,
@@ -285,12 +295,14 @@ func HandleDevLogin(w http.ResponseWriter, r *http.Request) {
 		ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name, updated_at = CURRENT_TIMESTAMP;
 	`, user.ID, user.Email, user.Name)
 	if err != nil {
+		logger.Logf(r.Context(), "[DEV BYPASS] DB Error upserting user: %v", err)
 		http.Error(w, fmt.Sprintf("database error: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	tokenStr, err := GenerateToken(user)
 	if err != nil {
+		logger.Logf(r.Context(), "[DEV BYPASS] Session token generation failed: %v", err)
 		http.Error(w, "session generation failed", http.StatusInternalServerError)
 		return
 	}
@@ -309,6 +321,7 @@ func HandleDevLogin(w http.ResponseWriter, r *http.Request) {
 	if frontendURL == "" {
 		frontendURL = "http://localhost:5173"
 	}
+	logger.Logf(r.Context(), "[DEV BYPASS] Authentication successful, redirecting to %s", frontendURL)
 	http.Redirect(w, r, frontendURL+"/", http.StatusFound)
 }
 
@@ -329,17 +342,20 @@ func sanitizeIDSegment(s string) string {
 
 func HandleCallback(w http.ResponseWriter, r *http.Request) {
 	if !useOIDC {
+		logger.Logf(r.Context(), "HandleCallback: OIDC auth not enabled")
 		http.Error(w, "OIDC auth not enabled", http.StatusBadRequest)
 		return
 	}
 
 	stateCookie, err := r.Cookie("oidc_state")
 	if err != nil {
+		logger.Logf(r.Context(), "HandleCallback: missing state cookie: %v", err)
 		http.Error(w, "missing state cookie", http.StatusBadRequest)
 		return
 	}
 
 	if r.URL.Query().Get("state") != stateCookie.Value {
+		logger.Logf(r.Context(), "HandleCallback: state parameter mismatch (CSRF?)")
 		http.Error(w, "invalid state parameter", http.StatusBadRequest)
 		return
 	}
@@ -347,18 +363,21 @@ func HandleCallback(w http.ResponseWriter, r *http.Request) {
 	// Exchange code for token
 	oauth2Token, err := oauth2Config.Exchange(r.Context(), r.URL.Query().Get("code"))
 	if err != nil {
+		logger.Logf(r.Context(), "HandleCallback: failed to exchange token: %v", err)
 		http.Error(w, fmt.Sprintf("failed to exchange token: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	rawIDToken, ok := oauth2Token.Extra("id_token").(string)
 	if !ok {
+		logger.Logf(r.Context(), "HandleCallback: no id_token in response")
 		http.Error(w, "no id_token in response", http.StatusInternalServerError)
 		return
 	}
 
 	idToken, err := oidcVerifier.Verify(r.Context(), rawIDToken)
 	if err != nil {
+		logger.Logf(r.Context(), "HandleCallback: failed to verify id token: %v", err)
 		http.Error(w, fmt.Sprintf("failed to verify id token: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -370,6 +389,7 @@ func HandleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := idToken.Claims(&claims); err != nil {
+		logger.Logf(r.Context(), "HandleCallback: failed to parse claims: %v", err)
 		http.Error(w, "failed to parse claims", http.StatusInternalServerError)
 		return
 	}
@@ -380,6 +400,8 @@ func HandleCallback(w http.ResponseWriter, r *http.Request) {
 		Name:  claims.Name,
 	}
 
+	logger.Logf(r.Context(), "HandleCallback: authenticating and upserting user: subject=%s email=%s", user.ID, user.Email)
+
 	// Upsert user in database
 	_, err = db.DB.Exec(`
 		INSERT INTO users (id, email, name, updated_at) 
@@ -387,6 +409,7 @@ func HandleCallback(w http.ResponseWriter, r *http.Request) {
 		ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name, updated_at = CURRENT_TIMESTAMP;
 	`, user.ID, user.Email, user.Name)
 	if err != nil {
+		logger.Logf(r.Context(), "HandleCallback: failed to save user info to database: %v", err)
 		http.Error(w, "failed to save user info to database", http.StatusInternalServerError)
 		return
 	}
@@ -394,6 +417,7 @@ func HandleCallback(w http.ResponseWriter, r *http.Request) {
 	// Generate session token
 	tokenStr, err := GenerateToken(user)
 	if err != nil {
+		logger.Logf(r.Context(), "HandleCallback: session generation failed: %v", err)
 		http.Error(w, "session generation failed", http.StatusInternalServerError)
 		return
 	}
@@ -414,10 +438,12 @@ func HandleCallback(w http.ResponseWriter, r *http.Request) {
 	if frontendURL == "" {
 		frontendURL = "http://localhost:5173"
 	}
+	logger.Logf(r.Context(), "HandleCallback: authentication successful, redirecting to %s", frontendURL)
 	http.Redirect(w, r, frontendURL+"/", http.StatusFound)
 }
 
 func HandleLogout(w http.ResponseWriter, r *http.Request) {
+	logger.Logf(r.Context(), "HandleLogout: clearing session cookie")
 	http.SetCookie(w, &http.Cookie{
 		Name:     cookieName,
 		Value:    "",
@@ -436,6 +462,7 @@ func HandleLogout(w http.ResponseWriter, r *http.Request) {
 func HandleMe(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie(cookieName)
 	if err != nil {
+		logger.Logf(r.Context(), "HandleMe: missing session cookie, returning unauthenticated")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
 		fmt.Fprint(w, `{"authenticated":false}`)
@@ -444,12 +471,14 @@ func HandleMe(w http.ResponseWriter, r *http.Request) {
 
 	user, err := VerifyToken(cookie.Value)
 	if err != nil {
+		logger.Logf(r.Context(), "HandleMe: token verification failed: %v", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
 		fmt.Fprint(w, `{"authenticated":false}`)
 		return
 	}
 
+	logger.Logf(r.Context(), "HandleMe: authenticated session active for user %s (%s)", user.Name, user.Email)
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"authenticated":true,"user":{"id":"%s","email":"%s","name":"%s"}}`, user.ID, user.Email, user.Name)
 }

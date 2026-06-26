@@ -5,11 +5,13 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"booklet/auth"
 	"booklet/db"
 	"booklet/embeddings"
 	"booklet/handlers"
+	"booklet/logger"
 	"booklet/metrics"
 	"booklet/storage"
 
@@ -156,10 +158,27 @@ func (rw *responseWriterWrapper) WriteHeader(code int) {
 
 func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rl := logger.NewRequestLogger()
+		ctx := logger.WithLogger(r.Context(), rl)
+		r = r.WithContext(ctx)
+
 		rw := &responseWriterWrapper{ResponseWriter: w, statusCode: http.StatusOK}
-		log.Printf("-> Started %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+
+		defer func() {
+			duration := time.Since(start)
+			if rec := recover(); rec != nil {
+				rl.Logf("CRASH: panic recovered: %v", rec)
+				rl.Print(r.Method, r.URL.Path, r.RemoteAddr, http.StatusInternalServerError, duration)
+				// Respond with 500 Internal Server Error
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			} else {
+				rl.Print(r.Method, r.URL.Path, r.RemoteAddr, rw.statusCode, duration)
+			}
+		}()
+
+		rl.Logf("Started %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
 		next.ServeHTTP(rw, r)
-		log.Printf("<- Finished %s %s with %d", r.Method, r.URL.Path, rw.statusCode)
 	})
 }
 
