@@ -157,8 +157,23 @@ func (rw *responseWriterWrapper) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 }
 
+// skipDiagnosticLogging lists paths that are called at high frequency by
+// internal infrastructure (e.g. Prometheus scraper). Allocating a full
+// RequestLogger with its log-entry slice for every scrape adds continuous
+// memory pressure that never fully clears between GC cycles.
+var skipDiagnosticLogging = map[string]bool{
+	"/metrics": true,
+}
+
 func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// For high-frequency infra paths, skip the diagnostic logger entirely
+		// to avoid constant allocations that inflate the process RSS.
+		if skipDiagnosticLogging[r.URL.Path] {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		start := time.Now()
 		rl := logger.NewRequestLogger()
 		ctx := logger.WithLogger(r.Context(), rl)

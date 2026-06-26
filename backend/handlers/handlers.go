@@ -11,9 +11,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"booklet/db"
@@ -67,11 +70,14 @@ func (sw *statusWriter) WriteHeader(statusCode int) {
 // 1. Document Handlers
 
 type DocumentResponse struct {
-	ID         string    `json:"id"`
-	Name       string    `json:"name"`
-	TotalPages int       `json:"total_pages"`
-	Status     string    `json:"status"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	TotalPages  int       `json:"total_pages"`
+	SplitPages  int       `json:"split_pages"`
+	ParsedPages int       `json:"parsed_pages"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 func HandleListDocuments(w http.ResponseWriter, r *http.Request) {
@@ -82,7 +88,7 @@ func HandleListDocuments(w http.ResponseWriter, r *http.Request) {
 	}
 
 	logger.Logf(r.Context(), "HandleListDocuments: querying database for active documents")
-	rows, err := db.DB.Query(`SELECT id, name, total_pages, status, created_at FROM documents WHERE is_dismissed = FALSE ORDER BY created_at DESC`)
+	rows, err := db.DB.Query(`SELECT id, name, total_pages, split_pages, parsed_pages, status, created_at, updated_at FROM documents WHERE is_dismissed = FALSE ORDER BY created_at DESC`)
 	if err != nil {
 		logger.Logf(r.Context(), "Error: failed to query documents list: %v", err)
 		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
@@ -94,7 +100,7 @@ func HandleListDocuments(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var d DocumentResponse
 		var id string
-		if err := rows.Scan(&id, &d.Name, &d.TotalPages, &d.Status, &d.CreatedAt); err != nil {
+		if err := rows.Scan(&id, &d.Name, &d.TotalPages, &d.SplitPages, &d.ParsedPages, &d.Status, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			logger.Logf(r.Context(), "Error: failed to scan document row: %v", err)
 			http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -164,8 +170,8 @@ func HandleGetDocument(w http.ResponseWriter, r *http.Request) {
 	var d DocumentDetailResponse
 	var id string
 	err := db.DB.QueryRow(`
-		SELECT id, name, total_pages, status, created_at 
-		FROM documents WHERE id = $1`, docID).Scan(&id, &d.Name, &d.TotalPages, &d.Status, &d.CreatedAt)
+		SELECT id, name, total_pages, split_pages, parsed_pages, status, created_at, updated_at 
+		FROM documents WHERE id = $1`, docID).Scan(&id, &d.Name, &d.TotalPages, &d.SplitPages, &d.ParsedPages, &d.Status, &d.CreatedAt, &d.UpdatedAt)
 	
 	if err == sql.ErrNoRows {
 		logger.Logf(r.Context(), "GetDocument: document %s not found", docID)
@@ -533,6 +539,18 @@ func HandleGetBookletPreviewPDF(w http.ResponseWriter, r *http.Request) {
 	logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Preview PDF streamed successfully. Total elapsed handler time: %s", time.Since(startTime))
 }
 
+var processingSemaphore chan struct{}
+
+func init() {
+	maxParallel := 5
+	if envVal := os.Getenv("MAX_PARALLEL_DOCUMENTS"); envVal != "" {
+		if val, err := strconv.Atoi(envVal); err == nil && val > 0 {
+			maxParallel = val
+		}
+	}
+	processingSemaphore = make(chan struct{}, maxParallel)
+}
+
 func HandleUploadDocument(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		logger.Logf(r.Context(), "HandleUploadDocument: method %s not allowed", r.Method)
@@ -587,9 +605,9 @@ func HandleUploadDocument(w http.ResponseWriter, r *http.Request) {
 
 	// Insert document metadata with processing status
 	_, err = db.DB.Exec(`
-		INSERT INTO documents (id, name, total_pages, status, created_at, updated_at) 
-		VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`, 
-		docID, header.Filename, 0, "processing")
+		INSERT INTO documents (id, name, total_pages, split_pages, parsed_pages, status, created_at, updated_at) 
+		VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`, 
+		docID, header.Filename, 0, 0, 0, "queued")
 	
 	if err != nil {
 		os.RemoveAll(tempDir)
@@ -598,7 +616,7 @@ func HandleUploadDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	metrics.DocumentUploadsTotal.With(prometheus.Labels{"status": "processing"}).Inc()
+	metrics.DocumentUploadsTotal.With(prometheus.Labels{"status": "queued"}).Inc()
 
 	logger.Logf(r.Context(), "HandleUploadDocument: metadata inserted, starting background processing worker")
 	// Spawn background worker to split pages, extract text, upload to MinIO and generate embeddings
@@ -618,55 +636,103 @@ func runBackgroundDocumentProcessing(docID uuid.UUID, localPath string, tempDir 
 	ctx := logger.WithLogger(context.Background(), rl)
 	success := false
 
+	var processedPages int32 = 0
+	var totalPagesVal int32 = 0
+	var currentStep atomic.Value
+	currentStep.Store("queued")
+
+	stopTicker := make(chan struct{})
+
+	// 1. Ticker and memory cleanup defer block (runs last)
 	defer func() {
+		close(stopTicker)
 		duration := time.Since(start)
 		rl.PrintTask(fmt.Sprintf("Document Processing (docID=%s)", docID), duration, success)
-		os.RemoveAll(tempDir)
+		if err := os.RemoveAll(tempDir); err != nil {
+			log.Printf("Warning: failed to clean up temp dir %s: %v", tempDir, err)
+		}
 		if recovered := recover(); recovered != nil {
 			rl.Logf("panic: background processing crashed for document %s: %v", docID, recovered)
 			rl.PrintTask(fmt.Sprintf("Document Processing (docID=%s)", docID), time.Since(start), false)
 			updateDocStatus(docID, "failed")
 			metrics.DocumentUploadsTotal.With(prometheus.Labels{"status": "failed"}).Inc()
 		}
+		runtime.GC()
+		debug.FreeOSMemory()
+	}()
+
+	// 2. Ticker goroutine
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				step := currentStep.Load().(string)
+				total := atomic.LoadInt32(&totalPagesVal)
+				processed := atomic.LoadInt32(&processedPages)
+				if total > 0 {
+					log.Printf("[Document Processing Progress (docID=%s)] Step: %s | Page %d/%d (%.1f%%)", docID, step, processed, total, float64(processed)/float64(total)*100)
+				} else {
+					log.Printf("[Document Processing Progress (docID=%s)] Step: %s (preparing document)", docID, step)
+				}
+			case <-stopTicker:
+				return
+			}
+		}
+	}()
+
+	rl.Logf("Background processing queued for document: %s (%s)", localPath, docID)
+
+	// 3. Acquire semaphore (runs first in cleanup order)
+	processingSemaphore <- struct{}{}
+	defer func() {
+		<-processingSemaphore
 	}()
 
 	rl.Logf("Background processing started for document: %s (%s)", localPath, docID)
 
-	pages, err := pdf.SplitDocument(ctx, docID.String(), localPath)
+	// Get page count first
+	totalPages, err := pdf.GetPageCount(localPath)
 	if err != nil {
-		rl.Logf("Error: failed to split document %s: %v", docID, err)
+		rl.Logf("Error: failed to get page count for %s: %v", docID, err)
 		updateDocStatus(docID, "failed")
 		metrics.DocumentUploadsTotal.With(prometheus.Labels{"status": "failed"}).Inc()
 		return
 	}
 
-	totalPages := len(pages)
-	rl.Logf("Split complete. %d pages found for document %s.", totalPages, docID)
-
-	// Update total page count in database
-	_, err = db.DB.Exec(`UPDATE documents SET total_pages = $1 WHERE id = $2`, totalPages, docID)
+	// Update total page count and status to processing in database immediately
+	_, err = db.DB.Exec(`UPDATE documents SET total_pages = $1, status = 'processing', updated_at = CURRENT_TIMESTAMP WHERE id = $2`, totalPages, docID)
 	if err != nil {
-		rl.Logf("Error: failed to update page count for %s: %v", docID, err)
+		rl.Logf("Error: failed to update page count and status for %s: %v", docID, err)
 		updateDocStatus(docID, "failed")
 		return
 	}
 
-	// Upload each page to MinIO and index page text + embeddings
-	for _, page := range pages {
+	atomic.StoreInt32(&totalPagesVal, int32(totalPages))
+	currentStep.Store("splitting PDF")
+
+	var processedCount int32
+	err = pdf.SplitDocument(ctx, docID.String(), localPath, func(current, total int, step string) {
+		currentStep.Store(step)
+		if step == "splitting PDF" {
+			atomic.StoreInt32(&processedPages, int32(current))
+			atomic.StoreInt32(&totalPagesVal, int32(total))
+			// Dynamically update split_pages count in database during splitting
+			_, _ = db.DB.Exec(`UPDATE documents SET split_pages = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, current, docID)
+		}
+	}, func(page pdf.PageInfo) error {
+		// Upload single page to MinIO
 		objectName := fmt.Sprintf("documents/%s/pages/page_%d.pdf", docID, page.PageNumber)
 		err = storage.UploadFile(ctx, objectName, page.LocalPath, "application/pdf")
 		if err != nil {
-			rl.Logf("Error: failed to upload page %d of %s to MinIO: %v", page.PageNumber, docID, err)
-			updateDocStatus(docID, "failed")
-			metrics.DocumentUploadsTotal.With(prometheus.Labels{"status": "failed"}).Inc()
-			return
+			return fmt.Errorf("failed to upload page %d to MinIO: %w", page.PageNumber, err)
 		}
 
 		// Generate embedding
 		embeddingVec, err := embeddings.ActiveEmbedder.Embed(ctx, page.Text)
 		if err != nil {
 			rl.Logf("Warning: failed to generate embedding for page %d of %s: %v", page.PageNumber, docID, err)
-			// Proceed with empty embedding instead of failing
 			embeddingVec = make([]float32, embeddings.ActiveEmbedder.Dimension())
 		}
 
@@ -678,13 +744,27 @@ func runBackgroundDocumentProcessing(docID uuid.UUID, localPath string, tempDir 
 			INSERT INTO document_pages (id, document_id, page_number, text_content, embedding, storage_path, width, height, created_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP)`,
 			pageID, docID, page.PageNumber, page.Text, embeddingStr, objectName, page.Width, page.Height)
-
 		if err != nil {
-			rl.Logf("Error: failed to save page %d metadata for %s: %v", page.PageNumber, docID, err)
-			updateDocStatus(docID, "failed")
-			metrics.DocumentUploadsTotal.With(prometheus.Labels{"status": "failed"}).Inc()
-			return
+			return fmt.Errorf("failed to save page %d metadata: %w", page.PageNumber, err)
 		}
+
+		currentProcessed := atomic.AddInt32(&processedCount, 1)
+		atomic.StoreInt32(&processedPages, currentProcessed)
+
+		// Update parsed_pages and updated_at in documents table
+		_, err = db.DB.Exec(`UPDATE documents SET parsed_pages = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, currentProcessed, docID)
+		if err != nil {
+			rl.Logf("Warning: failed to update processed pages count: %v", err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		rl.Logf("Error: failed to split/process document %s: %v", docID, err)
+		updateDocStatus(docID, "failed")
+		metrics.DocumentUploadsTotal.With(prometheus.Labels{"status": "failed"}).Inc()
+		return
 	}
 
 	updateDocStatus(docID, "ready")
@@ -694,9 +774,16 @@ func runBackgroundDocumentProcessing(docID uuid.UUID, localPath string, tempDir 
 }
 
 func updateDocStatus(id uuid.UUID, status string) {
-	_, err := db.DB.Exec(`UPDATE documents SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, status, id)
-	if err != nil {
-		log.Printf("Error: failed to update status for %s to %s: %v", id, status, err)
+	if status == "ready" {
+		_, err := db.DB.Exec(`UPDATE documents SET status = $1, split_pages = total_pages, parsed_pages = total_pages, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, status, id)
+		if err != nil {
+			log.Printf("Error: failed to update status for %s to %s: %v", id, status, err)
+		}
+	} else {
+		_, err := db.DB.Exec(`UPDATE documents SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, status, id)
+		if err != nil {
+			log.Printf("Error: failed to update status for %s to %s: %v", id, status, err)
+		}
 	}
 }
 
@@ -837,6 +924,8 @@ func runBackgroundBookletCompilation(bookletID uuid.UUID, docID string, req Book
 	defer func() {
 		duration := time.Since(start)
 		rl.PrintTask(fmt.Sprintf("Booklet Compilation (bookletID=%s)", bookletID), duration, success)
+		runtime.GC()
+		debug.FreeOSMemory()
 	}()
 
 	rl.Logf("Background booklet compilation started for: %s", bookletID)
