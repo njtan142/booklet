@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 )
@@ -44,31 +45,35 @@ func WithLogger(ctx context.Context, rl *RequestLogger) context.Context {
 // Logf records a log message. It logs to the RequestLogger in context if present,
 // otherwise it falls back to standard log.Printf immediately.
 func Logf(ctx context.Context, format string, v ...interface{}) {
+	msg := fmt.Sprintf(format, v...)
 	rl := FromContext(ctx)
 	if rl == nil {
-		log.Printf(format, v...)
+		log.Println(msg)
 		return
 	}
 	rl.mu.Lock()
-	defer rl.mu.Unlock()
 	rl.entries = append(rl.entries, LogEntry{
 		Timestamp: time.Now(),
-		Message:   fmt.Sprintf(format, v...),
+		Message:   msg,
 	})
+	rl.mu.Unlock()
+	log.Println(msg)
 }
 
 // Logf directly records a log message on the RequestLogger instance
 func (rl *RequestLogger) Logf(format string, v ...interface{}) {
+	msg := fmt.Sprintf(format, v...)
 	if rl == nil {
-		log.Printf(format, v...)
+		log.Println(msg)
 		return
 	}
 	rl.mu.Lock()
-	defer rl.mu.Unlock()
 	rl.entries = append(rl.entries, LogEntry{
 		Timestamp: time.Now(),
-		Message:   fmt.Sprintf(format, v...),
+		Message:   msg,
 	})
+	rl.mu.Unlock()
+	log.Println(msg)
 }
 
 // Print logs all accumulated entries in one go
@@ -80,13 +85,13 @@ func (rl *RequestLogger) Print(method, path, remoteAddr string, statusCode int, 
 	entries := rl.entries
 	rl.mu.Unlock()
 
-	var out string
-	out += fmt.Sprintf("\n=== REQUEST DIAGNOSTICS: %s %s from %s | Status: %d | Duration: %v ===\n", method, path, remoteAddr, statusCode, duration)
+	var out strings.Builder
+	out.WriteString(fmt.Sprintf("\n=== REQUEST DIAGNOSTICS: %s %s from %s | Status: %d | Duration: %v ===\n", method, path, remoteAddr, statusCode, duration))
 	for _, entry := range entries {
-		out += fmt.Sprintf("[%s] %s\n", entry.Timestamp.Format("2006-01-02 15:04:05.000"), entry.Message)
+		out.WriteString(fmt.Sprintf("[%s] %s\n", entry.Timestamp.Format("2006-01-02 15:04:05.000"), entry.Message))
 	}
-	out += "========================================================================="
-	log.Println(out)
+	out.WriteString("=========================================================================")
+	log.Println(out.String())
 }
 
 // PrintTask logs all accumulated entries for a background task/worker
@@ -103,11 +108,11 @@ func (rl *RequestLogger) PrintTask(taskName string, duration time.Duration, succ
 		status = "FAILED"
 	}
 
-	var out string
-	out += fmt.Sprintf("\n=== BACKGROUND TASK DIAGNOSTICS: %s | Status: %s | Duration: %v ===\n", taskName, status, duration)
+	var out strings.Builder
+	out.WriteString(fmt.Sprintf("\n=== BACKGROUND TASK DIAGNOSTICS: %s | Status: %s | Duration: %v ===\n", taskName, status, duration))
 	for _, entry := range entries {
-		out += fmt.Sprintf("[%s] %s\n", entry.Timestamp.Format("2006-01-02 15:04:05.000"), entry.Message)
+		out.WriteString(fmt.Sprintf("[%s] %s\n", entry.Timestamp.Format("2006-01-02 15:04:05.000"), entry.Message))
 	}
-	out += "========================================================================="
-	log.Println(out)
+	out.WriteString("=========================================================================")
+	log.Println(out.String())
 }
