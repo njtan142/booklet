@@ -1,16 +1,23 @@
-import React, { useState } from "react"
+import React, { useState, useEffect, useMemo } from "react"
 import { useForm } from "react-hook-form"
 import { useQuery } from "@tanstack/react-query"
-import { api } from "../api"
+import { api, type SearchResult } from "../api"
 import { Button } from "./ui/button"
 import { Input } from "./ui/input"
 import { Select } from "./ui/select"
 import { Form, FormField, FormItem, FormControl } from "./ui/form"
 import { Search, Loader2, Sparkles, FileText, ChevronRight } from "lucide-react"
 
+interface GroupedDoc {
+  id: string;
+  name: string;
+  matches: SearchResult[];
+}
+
 export const SemanticSearch: React.FC = () => {
   const [triggerQuery, setTriggerQuery] = useState<string>("")
   const [docFilter, setDocFilter] = useState<string>("")
+  const [selectedDocId, setSelectedDocId] = useState<string>("")
 
   const searchForm = useForm({
     defaultValues: { query: "" },
@@ -29,6 +36,31 @@ export const SemanticSearch: React.FC = () => {
     enabled: !!triggerQuery,
   })
   const results = rawResults || []
+
+  // Group matches by document
+  const groupedDocs = useMemo(() => {
+    const groups: { [key: string]: GroupedDoc } = {}
+    results.forEach((r) => {
+      if (!groups[r.document_id]) {
+        groups[r.document_id] = {
+          id: r.document_id,
+          name: r.document_name,
+          matches: [],
+        }
+      }
+      groups[r.document_id].matches.push(r)
+    })
+    return Object.values(groups)
+  }, [results])
+
+  // Automatically select the first book when search results change
+  useEffect(() => {
+    if (groupedDocs.length > 0) {
+      setSelectedDocId(groupedDocs[0].id)
+    } else {
+      setSelectedDocId("")
+    }
+  }, [groupedDocs])
 
   const handleSearch = searchForm.handleSubmit((values) => {
     if (values.query.trim()) {
@@ -59,7 +91,7 @@ export const SemanticSearch: React.FC = () => {
   }
 
   return (
-    <div className="space-y-6 max-w-4xl mx-auto">
+    <div className="space-y-6 max-w-6xl mx-auto">
       <div>
         <h2 className="text-2xl font-bold text-foreground m-0">Semantic Search</h2>
         <p className="text-muted-foreground text-sm mt-1">Ask questions or search topics across your library using self-hosted vector embeddings.</p>
@@ -126,37 +158,60 @@ export const SemanticSearch: React.FC = () => {
         {!isLoading && results.length > 0 && (
           <div className="space-y-4">
             <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Top Semantic Matches</h3>
-            <div className="space-y-3">
-              {results.map((result, idx) => {
-                const similarityPercentage = Math.round(result.similarity * 100)
-                return (
-                  <div key={idx} className="glass p-5 rounded-2xl border-border hover:border-primary/30 transition-all flex flex-col md:flex-row md:items-start gap-4">
-                    {/* Score column */}
-                    <div className="flex md:flex-col items-center justify-between md:justify-start gap-2 bg-background/60 border border-border px-3 py-2 rounded-xl min-w-28 text-center">
-                      <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Match Score</span>
-                      <span className="text-lg font-black text-primary">{similarityPercentage}%</span>
-                    </div>
-
-                    {/* Content column */}
-                    <div className="flex-1 min-w-0 space-y-2.5">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="flex items-center gap-1 text-[11px] text-muted-foreground font-semibold bg-muted px-2 py-0.5 rounded border border-border">
-                          <FileText className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
-                          {result.document_name}
-                        </span>
-                        <ChevronRight className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
-                        <span className="text-[11px] text-primary font-bold bg-primary/15 px-2 py-0.5 rounded border border-primary/20">
-                          Page {result.page_number}
-                        </span>
+            
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+              {/* Sidebar: Grouped Books List */}
+              <div className="col-span-12 md:col-span-4 space-y-3 max-h-[600px] overflow-y-auto pr-2">
+                {groupedDocs.map((doc) => (
+                  <button
+                    key={doc.id}
+                    onClick={() => setSelectedDocId(doc.id)}
+                    className={`w-full text-left p-4 rounded-xl border transition-all flex flex-col ${
+                      selectedDocId === doc.id
+                        ? "bg-primary/10 border-primary shadow-sm"
+                        : "bg-background/40 border-border hover:border-primary/20 hover:bg-background/60"
+                    }`}
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <FileText className="h-4.5 w-4.5 text-muted-foreground mt-0.5 flex-shrink-0" />
+                      <div className="min-w-0">
+                        <span className="font-bold text-xs text-foreground block truncate">{doc.name}</span>
+                        <span className="text-[10px] text-muted-foreground block mt-0.5">{doc.matches.length} matching pages</span>
                       </div>
-
-                      <p className="text-foreground/80 text-xs leading-relaxed italic bg-background/40 p-3 rounded-lg border border-border">
-                        {highlightText(result.text_snippet, triggerQuery)}
-                      </p>
                     </div>
+
+                    {/* Expandable Snippets under selected book */}
+                    {selectedDocId === doc.id && (
+                      <div className="mt-3.5 space-y-2 pt-3.5 border-t border-primary/20 w-full">
+                        {doc.matches.map((m, i) => (
+                          <div key={i} className="text-[11px] bg-background/60 p-2.5 rounded-lg border border-border/60 hover:border-primary/30 transition-colors">
+                            <span className="text-primary font-bold">Page {m.page_number}</span>
+                            <p className="text-foreground/80 leading-relaxed italic mt-1 font-serif">
+                              {highlightText(m.text_snippet, triggerQuery)}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </button>
+                ))}
+              </div>
+
+              {/* Preview Pane: Merged PDF inside Iframe */}
+              <div className="col-span-12 md:col-span-8 h-[600px] bg-background/40 border border-border rounded-2xl overflow-hidden glass flex flex-col">
+                {selectedDocId ? (
+                  <iframe
+                    src={`${api.getSearchPreviewUrl(selectedDocId, triggerQuery)}#search=${encodeURIComponent(triggerQuery)}`}
+                    className="w-full h-full border-none"
+                    title="Search Match Preview"
+                  />
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-2">
+                    <FileText className="h-8 w-8 text-muted-foreground/50" />
+                    <p className="text-sm">Select a book to preview matched pages.</p>
                   </div>
-                )
-              })}
+                )}
+              </div>
             </div>
           </div>
         )}

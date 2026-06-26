@@ -147,4 +147,8 @@ export const api = {
     if (docId) path += `&document_id=${docId}`;
     return apiFetch<SearchResult[]>(path);
   },
+  
+  getSearchPreviewUrl: (docId: string, query: string) => {
+    return `${API_BASE}/documents/${docId}/search-preview?q=${encodeURIComponent(query)}`;
+  },
 };

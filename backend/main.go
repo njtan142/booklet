@@ -76,6 +76,7 @@ func main() {
 
 	// Semantic Search route (requires authentication middleware)
 	mux.Handle("/api/search", auth.RequireAuth(http.HandlerFunc(handlers.HandleSemanticSearch)))
+	mux.Handle("/api/documents/{id}/search-preview", auth.RequireAuth(http.HandlerFunc(handlers.HandleDocumentSearchPreviewPDF)))
 
 	// Prometheus Metrics endpoint
 	mux.Handle("/metrics", promhttp.Handler())

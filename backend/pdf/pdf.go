@@ -3,6 +3,7 @@ package pdf
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"os"
@@ -175,15 +176,24 @@ func processSinglePage(filePath string) (text string, width float64, height floa
 
 	// 2. Extract plain text
 	var textBuf strings.Builder
-	texts := p.Content().Text
-	
-	// Concatenate text elements
-	for _, txt := range texts {
-		textBuf.WriteString(txt.S)
-		textBuf.WriteString(" ")
+	plainTextReader, err := r.GetPlainText()
+	if err == nil {
+		if _, err := io.Copy(&textBuf, plainTextReader); err == nil {
+			text = textBuf.String()
+		}
+	}
+	if text == "" {
+		// Fallback to manual concatenation if GetPlainText fails or is empty
+		var manualBuf strings.Builder
+		texts := p.Content().Text
+		for _, txt := range texts {
+			manualBuf.WriteString(txt.S)
+			manualBuf.WriteString(" ")
+		}
+		text = manualBuf.String()
 	}
 
-	return strings.TrimSpace(textBuf.String()), width, height, nil
+	return strings.TrimSpace(text), width, height, nil
 }
 
 type DBPageInfo struct {
