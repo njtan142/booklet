@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -21,7 +22,9 @@ import (
 	"booklet/storage"
 
 	"github.com/google/uuid"
+	"github.com/minio/minio-go/v7"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/signintech/gopdf"
 )
 
 type statusWriter struct {
@@ -198,6 +201,314 @@ func HandleGetDocument(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(d)
 }
 
+func HandleGetPagePDF(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	docID := r.PathValue("id")
+	if _, err := uuid.Parse(docID); err != nil {
+		http.Error(w, "invalid UUID format", http.StatusBadRequest)
+		return
+	}
+
+	pageNumStr := r.PathValue("page_number")
+	pageNum, err := strconv.Atoi(pageNumStr)
+	if err != nil || pageNum < 1 {
+		http.Error(w, "invalid page number", http.StatusBadRequest)
+		return
+	}
+
+	// Verify page exists and get storage path
+	var storagePath string
+	err = db.DB.QueryRow(`
+		SELECT storage_path 
+		FROM document_pages 
+		WHERE document_id = $1 AND page_number = $2`, docID, pageNum).Scan(&storagePath)
+	
+	if err == sql.ErrNoRows {
+		http.Error(w, "page not found", http.StatusNotFound)
+		return
+	} else if err != nil {
+		log.Printf("Error: failed to query page PDF %s/%d: %v", docID, pageNum, err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Get file from MinIO and stream it
+	ctx := r.Context()
+	object, err := storage.MinioClient.GetObject(ctx, storage.BucketName, storagePath, minio.GetObjectOptions{})
+	if err != nil {
+		log.Printf("Error: failed to get page PDF from MinIO: %v", err)
+		http.Error(w, "failed to read page from storage", http.StatusInternalServerError)
+		return
+	}
+	defer object.Close()
+
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", "inline")
+	if _, err := io.Copy(w, object); err != nil {
+		log.Printf("Error: failed to stream page PDF: %v", err)
+	}
+}
+
+func HandleGetBookletPreviewPDF(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	docID := r.PathValue("id")
+	startTime := time.Now()
+	log.Printf("[HandleGetBookletPreviewPDF] Received preview request for docID=%s", docID)
+
+	if _, err := uuid.Parse(docID); err != nil {
+		log.Printf("[HandleGetBookletPreviewPDF] Invalid UUID format: %s", docID)
+		http.Error(w, "invalid UUID format", http.StatusBadRequest)
+		return
+	}
+
+	// Parse query parameters
+	q := r.URL.Query()
+	margin, _ := strconv.ParseFloat(q.Get("margin"), 64)
+	gutter, _ := strconv.ParseFloat(q.Get("gutter"), 64)
+	paperSize := q.Get("paper_size")
+	if paperSize == "" {
+		paperSize = "a4"
+	}
+	sigSize, _ := strconv.Atoi(q.Get("signature_size"))
+	if sigSize <= 0 {
+		sigSize = 4
+	}
+	guides := q.Get("guides") == "true"
+	side := q.Get("side") // "front" or "back"
+	if side != "back" {
+		side = "front"
+	}
+
+	log.Printf("[HandleGetBookletPreviewPDF] Parsed params: margin=%.2f, gutter=%.2f, paperSize=%s, sigSize=%d, guides=%t, side=%s", 
+		margin, gutter, paperSize, sigSize, guides, side)
+
+	// Create temp directory for execution
+	tempDir, err := os.MkdirTemp("", "booklet-preview-*")
+	if err != nil {
+		log.Printf("[HandleGetBookletPreviewPDF] Error: failed to create temp dir: %v", err)
+		http.Error(w, "failed to create temp dir", http.StatusInternalServerError)
+		return
+	}
+	defer os.RemoveAll(tempDir)
+	log.Printf("[HandleGetBookletPreviewPDF] Created tempDir: %s", tempDir)
+
+	// Fetch page records for first signature (page_number <= sigSize)
+	ctx := r.Context()
+	log.Printf("[HandleGetBookletPreviewPDF] Querying document pages from DB (page_number <= %d)", sigSize)
+	rows, err := db.DB.Query(`
+		SELECT page_number, storage_path, width, height 
+		FROM document_pages 
+		WHERE document_id = $1 AND page_number <= $2
+		ORDER BY page_number ASC`, docID, sigSize)
+	
+	if err != nil {
+		log.Printf("[HandleGetBookletPreviewPDF] Error: failed to query pages for preview: %v", err)
+		http.Error(w, "database error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var dbPages []pdf.DBPageInfo
+	for rows.Next() {
+		var p pdf.DBPageInfo
+		if err := rows.Scan(&p.PageNumber, &p.StoragePath, &p.Width, &p.Height); err != nil {
+			log.Printf("[HandleGetBookletPreviewPDF] Error: failed to scan page info: %v", err)
+			http.Error(w, "database error", http.StatusInternalServerError)
+			return
+		}
+		dbPages = append(dbPages, p)
+	}
+
+	log.Printf("[HandleGetBookletPreviewPDF] Found %d pages in DB for signature", len(dbPages))
+
+	if len(dbPages) == 0 {
+		log.Printf("[HandleGetBookletPreviewPDF] Error: no pages found for document %s", docID)
+		http.Error(w, "no pages found for document", http.StatusNotFound)
+		return
+	}
+
+	// Download files
+	downloadStart := time.Now()
+	var localPagePaths []string
+	for _, dbPage := range dbPages {
+		localPath := filepath.Join(tempDir, fmt.Sprintf("page_%d.pdf", dbPage.PageNumber))
+		log.Printf("[HandleGetBookletPreviewPDF] Downloading storagePath=%s -> localPath=%s", dbPage.StoragePath, localPath)
+		err := storage.DownloadFile(ctx, dbPage.StoragePath, localPath)
+		if err != nil {
+			log.Printf("[HandleGetBookletPreviewPDF] Error: failed to download page %d: %v", dbPage.PageNumber, err)
+			http.Error(w, "failed to download pages", http.StatusInternalServerError)
+			return
+		}
+		
+		info, err := os.Stat(localPath)
+		if err == nil {
+			log.Printf("[HandleGetBookletPreviewPDF] Downloaded page %d successfully. Size: %d bytes", dbPage.PageNumber, info.Size())
+		}
+		localPagePaths = append(localPagePaths, localPath)
+	}
+	log.Printf("[HandleGetBookletPreviewPDF] Finished downloading all pages in %s", time.Since(downloadStart))
+
+	// Merge files safely
+	mergeStart := time.Now()
+	log.Printf("[HandleGetBookletPreviewPDF] Merging %d files safely...", len(localPagePaths))
+	tempMergedPath, err := pdf.MergeFilesSafe(localPagePaths, tempDir)
+	if err != nil {
+		log.Printf("[HandleGetBookletPreviewPDF] Error: failed to merge pages: %v", err)
+		http.Error(w, "failed to merge pages", http.StatusInternalServerError)
+		return
+	}
+	
+	mergedInfo, err := os.Stat(tempMergedPath)
+	if err == nil {
+		log.Printf("[HandleGetBookletPreviewPDF] Merged PDF created at %s, size: %d bytes (took %s)", tempMergedPath, mergedInfo.Size(), time.Since(mergeStart))
+	} else {
+		log.Printf("[HandleGetBookletPreviewPDF] Merged PDF created at %s (took %s)", tempMergedPath, time.Since(mergeStart))
+	}
+
+	// Calculate layout sheets
+	sheets := pdf.CalculateBookletLayout(len(dbPages), sigSize)
+	if len(sheets) == 0 {
+		log.Printf("[HandleGetBookletPreviewPDF] Error: calculated layout has 0 sheets")
+		http.Error(w, "invalid booklet layout", http.StatusInternalServerError)
+		return
+	}
+
+	var targetSheet pdf.SheetSide
+	if side == "back" {
+		if len(sheets) > 1 {
+			targetSheet = sheets[1]
+		} else {
+			targetSheet = sheets[0]
+		}
+	} else {
+		targetSheet = sheets[0]
+	}
+
+	log.Printf("[HandleGetBookletPreviewPDF] Target sheet pages: LeftPage=%d, RightPage=%d", targetSheet.LeftPage, targetSheet.RightPage)
+
+	// Create new PDF document using gopdf
+	pdfDoc := gopdf.GoPdf{}
+
+	// Configure paper size
+	var sheetWidth, sheetHeight float64
+	if strings.ToLower(paperSize) == "letter" {
+		sheetWidth = 792.00
+		sheetHeight = 612.00
+	} else {
+		sheetWidth = 841.89
+		sheetHeight = 595.28
+	}
+
+	pdfDoc.Start(gopdf.Config{PageSize: gopdf.Rect{W: sheetWidth, H: sheetHeight}})
+	pdfDoc.AddPage()
+
+	availWidth := sheetWidth - (2 * margin) - gutter
+	slotWidth := availWidth / 2
+	availHeight := sheetHeight - (2 * margin)
+
+	// Map pages for easy lookup by 1-based page number
+	pagesMap := make(map[int]pdf.DBPageInfo)
+	for _, p := range dbPages {
+		pagesMap[p.PageNumber] = p
+	}
+
+	// Helper function to draw page inside a slot (left or right)
+	drawPageInSlot := func(pageNum int, isRightSlot bool) error {
+		if pageNum == 0 {
+			return nil
+		}
+
+		dbPage, exists := pagesMap[pageNum]
+		if !exists {
+			return nil
+		}
+		localPath := filepath.Join(tempDir, fmt.Sprintf("page_%d.pdf", pageNum))
+
+		var slotX float64
+		if isRightSlot {
+			slotX = margin + slotWidth + gutter
+		} else {
+			slotX = margin
+		}
+		slotY := margin
+
+		scaleW := slotWidth / dbPage.Width
+		scaleH := availHeight / dbPage.Height
+		scale := math.Min(scaleW, scaleH)
+
+		drawW := dbPage.Width * scale
+		drawH := dbPage.Height * scale
+
+		offsetX := slotX + (slotWidth-drawW)/2
+		offsetY := slotY + (availHeight-drawH)/2
+
+		tplID := pdfDoc.ImportPage(localPath, 1, "/MediaBox")
+		pdfDoc.UseImportedTemplate(tplID, offsetX, offsetY, drawW, drawH)
+
+		return nil
+	}
+
+	if err := drawPageInSlot(targetSheet.LeftPage, false); err != nil {
+		log.Printf("[HandleGetBookletPreviewPDF] Error: failed to draw left page: %v", err)
+		http.Error(w, "failed to compile preview sheet", http.StatusInternalServerError)
+		return
+	}
+
+	if err := drawPageInSlot(targetSheet.RightPage, true); err != nil {
+		log.Printf("[HandleGetBookletPreviewPDF] Error: failed to draw right page: %v", err)
+		http.Error(w, "failed to compile preview sheet", http.StatusInternalServerError)
+		return
+	}
+
+	// Draw folding guidelines if enabled
+	if guides {
+		pdfDoc.SetLineWidth(0.5)
+		pdfDoc.SetStrokeColor(180, 180, 180)
+		pdfDoc.SetLineType("dashed")
+		pdfDoc.Line(sheetWidth/2, 0, sheetWidth/2, sheetHeight)
+		pdfDoc.SetLineType("solid")
+	}
+
+	localFilteredPath := filepath.Join(tempDir, "preview_sheet.pdf")
+	err = pdfDoc.WritePdf(localFilteredPath)
+	if err != nil {
+		log.Printf("[HandleGetBookletPreviewPDF] Error: failed to write preview PDF: %v", err)
+		http.Error(w, "failed to write preview sheet", http.StatusInternalServerError)
+		return
+	}
+	
+	filteredInfo, err := os.Stat(localFilteredPath)
+	if err == nil {
+		log.Printf("[HandleGetBookletPreviewPDF] Slice extraction complete: %s, size: %d bytes (took %s)", localFilteredPath, filteredInfo.Size(), time.Since(startTime))
+	} else {
+		log.Printf("[HandleGetBookletPreviewPDF] Slice extraction complete: %s (took %s)", localFilteredPath, time.Since(startTime))
+	}
+
+	// Stream back
+	f, err := os.Open(localFilteredPath)
+	if err != nil {
+		log.Printf("[HandleGetBookletPreviewPDF] Error: failed to open filtered file: %v", err)
+		http.Error(w, "failed to read preview sheet", http.StatusInternalServerError)
+		return
+	}
+	defer f.Close()
+
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", "inline")
+	if _, err := io.Copy(w, f); err != nil {
+		log.Printf("[HandleGetBookletPreviewPDF] Error: failed to stream preview PDF bytes: %v", err)
+	}
+	log.Printf("[HandleGetBookletPreviewPDF] Preview PDF streamed successfully. Total elapsed handler time: %s", time.Since(startTime))
+}
+
 func HandleUploadDocument(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -361,6 +672,7 @@ type BookletCompileRequest struct {
 	Gutter        float64 `json:"gutter"`
 	PaperSize     string  `json:"paper_size"`
 	SignatureSize int     `json:"signature_size"`
+	Guides        bool    `json:"guides"`
 }
 
 type BookletResponse struct {
@@ -433,8 +745,9 @@ func HandleCompileBooklet(w http.ResponseWriter, r *http.Request) {
 		  AND config_gutter = $3 
 		  AND config_paper_size = $4 
 		  AND config_signature_size = $5
+		  AND config_guides = $6
 		ORDER BY created_at DESC LIMIT 1`,
-		docID, req.Margin, req.Gutter, req.PaperSize, req.SignatureSize).Scan(&cachedID, &cachedStatus)
+		docID, req.Margin, req.Gutter, req.PaperSize, req.SignatureSize, req.Guides).Scan(&cachedID, &cachedStatus)
 
 	if err == nil {
 		log.Printf("Found cached booklet compilation %s (status: %s) for document %s", cachedID, cachedStatus, docID)
@@ -451,9 +764,9 @@ func HandleCompileBooklet(w http.ResponseWriter, r *http.Request) {
 
 	bookletID := uuid.New()
 	_, err = db.DB.Exec(`
-		INSERT INTO compiled_booklets (id, document_id, status, config_margin, config_gutter, config_paper_size, config_signature_size, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)`,
-		bookletID, docID, "compiling", req.Margin, req.Gutter, req.PaperSize, req.SignatureSize)
+		INSERT INTO compiled_booklets (id, document_id, status, config_margin, config_gutter, config_paper_size, config_signature_size, config_guides, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP)`,
+		bookletID, docID, "compiling", req.Margin, req.Gutter, req.PaperSize, req.SignatureSize, req.Guides)
 	
 	if err != nil {
 		log.Printf("Error: failed to insert compiled booklet %s for document %s: %v", bookletID, docID, err)
@@ -508,6 +821,7 @@ func runBackgroundBookletCompilation(bookletID uuid.UUID, docID string, req Book
 		Gutter:        req.Gutter,
 		PaperSize:     req.PaperSize,
 		SignatureSize: req.SignatureSize,
+		Guides:        req.Guides,
 	})
 
 	if err != nil {
@@ -576,13 +890,15 @@ func HandleDownloadBooklet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var status, storagePath string
+	var status, storagePath, paperSize, docID string
 	var sigSize, totalOriginalPages int
+	var margin, gutter float64
+	var guides bool
 	err := db.DB.QueryRow(`
-		SELECT cb.status, cb.storage_path, cb.config_signature_size, d.total_pages 
+		SELECT cb.status, cb.storage_path, cb.config_signature_size, d.total_pages, cb.config_paper_size, cb.document_id, cb.config_margin, cb.config_gutter, cb.config_guides
 		FROM compiled_booklets cb
 		JOIN documents d ON cb.document_id = d.id
-		WHERE cb.id = $1`, bookletID).Scan(&status, &storagePath, &sigSize, &totalOriginalPages)
+		WHERE cb.id = $1`, bookletID).Scan(&status, &storagePath, &sigSize, &totalOriginalPages, &paperSize, &docID, &margin, &gutter, &guides)
 	if err == sql.ErrNoRows {
 		log.Printf("DownloadBooklet: booklet %s not found", bookletID)
 		http.Error(w, "booklet not found", http.StatusNotFound)
@@ -632,7 +948,38 @@ func HandleDownloadBooklet(w http.ResponseWriter, r *http.Request) {
 
 	// Apply filtering/slicing on-the-fly if requested
 	if filter != "" || sheets != "" {
-		filteredKey, err := pdf.FilterBookletPages(ctx, storagePath, filter, sheets)
+		// Fetch original pages from DB to compile slice
+		rows, err := db.DB.Query(`
+			SELECT page_number, storage_path, width, height 
+			FROM document_pages 
+			WHERE document_id = $1
+			ORDER BY page_number ASC`, docID)
+		if err != nil {
+			log.Printf("Error: failed to query pages for booklet slice %s: %v", bookletID, err)
+			http.Error(w, "database error", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		var dbPages []pdf.DBPageInfo
+		for rows.Next() {
+			var p pdf.DBPageInfo
+			if err := rows.Scan(&p.PageNumber, &p.StoragePath, &p.Width, &p.Height); err != nil {
+				log.Printf("Error: failed to scan page info for booklet slice %s: %v", bookletID, err)
+				http.Error(w, "database error", http.StatusInternalServerError)
+				return
+			}
+			dbPages = append(dbPages, p)
+		}
+
+		filteredKey, err := pdf.CompileBookletSlice(ctx, dbPages, pdf.BookletConfig{
+			Margin:        margin,
+			Gutter:        gutter,
+			PaperSize:     paperSize,
+			SignatureSize: sigSize,
+			Guides:        guides,
+		}, filter, sheets)
+
 		if err != nil {
 			log.Printf("Error: failed to slice booklet pages for %s: %v", bookletID, err)
 			http.Error(w, "failed to slice booklet pages: "+err.Error(), http.StatusInternalServerError)

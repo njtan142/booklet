@@ -115,7 +115,7 @@ export const api = {
   // Booklet
   compileBooklet: (
     docId: string, 
-    config: { margin: number; gutter: number; paper_size: string; signature_size: number }
+    config: { margin: number; gutter: number; paper_size: string; signature_size: number; guides: boolean }
   ) => apiFetch<{ booklet_id: string }>(`/documents/${docId}/booklet/compile`, {
     method: "POST",
     body: JSON.stringify(config),
@@ -124,13 +124,21 @@ export const api = {
   getBooklet: (id: string) => apiFetch<BookletInfo>(`/booklets/${id}`),
   
   getDownloadUrl: (bookletId: string, filter?: string, sheets?: string, pages?: string) => {
-    let urlStr = `http://localhost:8080/api/booklets/${bookletId}/download`;
+    let urlStr = `${API_BASE}/booklets/${bookletId}/download`;
     const params = new URLSearchParams();
     if (filter) params.append("filter", filter);
     if (sheets) params.append("sheets", sheets);
     if (pages) params.append("pages", pages);
     const query = params.toString();
     return query ? `${urlStr}?${query}` : urlStr;
+  },
+
+  getPagePdfUrl: (docId: string, pageNum: number) => {
+    return `${API_BASE}/documents/${docId}/pages/${pageNum}/pdf`;
+  },
+
+  getBookletPreviewUrl: (docId: string, margin: number, gutter: number, paperSize: string, sigSize: number, guides: boolean, side: string) => {
+    return `${API_BASE}/documents/${docId}/booklet/preview?margin=${margin}&gutter=${gutter}&paper_size=${paperSize}&signature_size=${sigSize}&guides=${guides}&side=${side}`;
   },
 
   // Search

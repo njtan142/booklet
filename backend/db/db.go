@@ -141,11 +141,20 @@ func runMigrations() error {
 			config_gutter DOUBLE PRECISION NOT NULL,
 			config_paper_size TEXT NOT NULL,
 			config_signature_size INT NOT NULL,
+			config_guides BOOLEAN NOT NULL DEFAULT FALSE,
 			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 		);
 	`)
 	if err != nil {
 		return err
+	}
+
+	// Add config_guides column if it does not exist in case table was created earlier
+	_, err = DB.Exec(`
+		ALTER TABLE compiled_booklets ADD COLUMN IF NOT EXISTS config_guides BOOLEAN NOT NULL DEFAULT FALSE;
+	`)
+	if err != nil {
+		log.Printf("Warning: failed to add config_guides column: %v", err)
 	}
 
 	log.Println("Database migrations applied successfully.")

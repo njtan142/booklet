@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	"github.com/signintech/gopdf"
 )
 
 type PageInfo struct {
@@ -32,6 +33,7 @@ type BookletConfig struct {
 	Gutter        float64 // Gutter spacing between pages in PDF points
 	PaperSize     string  // "A4" or "Letter"
 	SignatureSize int     // e.g. 4, 8, 16
+	Guides        bool    // Draw folding/cutting guides
 }
 
 // SplitDocument splits the uploaded PDF into single-page PDFs, extracts text and page dimensions
@@ -233,7 +235,9 @@ func MergeFilesSafe(files []string, tempDir string) (string, error) {
 	return currentLevel[0], nil
 }
 
-// CompileBooklet programmatically positions single-page PDFs onto a landscape canvas using pdfcpu
+
+
+// CompileBooklet programmatically positions single-page PDFs onto a landscape canvas using gopdf
 func CompileBooklet(ctx context.Context, dbPages []DBPageInfo, config BookletConfig) (string, error) {
 	// Create a temp directory for downloaded single pages
 	tempDir, err := os.MkdirTemp("", "booklet-compile-*")
@@ -242,7 +246,7 @@ func CompileBooklet(ctx context.Context, dbPages []DBPageInfo, config BookletCon
 	}
 	defer os.RemoveAll(tempDir)
 
-	log.Printf("Compiling booklet using pdfcpu for %d pages (Signature size: %d)...", len(dbPages), config.SignatureSize)
+	log.Printf("Compiling booklet using gopdf for %d pages (Signature size: %d, Margin: %.2f, Gutter: %.2f)...", len(dbPages), config.SignatureSize, config.Margin, config.Gutter)
 
 	// Sort database pages sequentially by page number
 	sort.Slice(dbPages, func(i, j int) bool {
@@ -251,6 +255,7 @@ func CompileBooklet(ctx context.Context, dbPages []DBPageInfo, config BookletCon
 
 	// Download all required single-page PDF files locally in order
 	var localPagePaths []string
+	pagesMap := make(map[int]DBPageInfo)
 	for _, dbPage := range dbPages {
 		localPath := filepath.Join(tempDir, fmt.Sprintf("page_%d.pdf", dbPage.PageNumber))
 		err := storage.DownloadFile(ctx, dbPage.StoragePath, localPath)
@@ -258,53 +263,114 @@ func CompileBooklet(ctx context.Context, dbPages []DBPageInfo, config BookletCon
 			return "", fmt.Errorf("failed to download page %d: %w", dbPage.PageNumber, err)
 		}
 		localPagePaths = append(localPagePaths, localPath)
+		pagesMap[dbPage.PageNumber] = dbPage
 	}
 
 	if len(localPagePaths) == 0 {
 		return "", fmt.Errorf("no pages to compile")
 	}
 
-	// Merge all single-page PDFs into a single sequential PDF file first using chunked merging.
-	// This ensures the page tree depth remains shallow and does not exceed pdfcpu recursion limits.
-	tempMergedPath, err := MergeFilesSafe(localPagePaths, tempDir)
-	if err != nil {
-		return "", fmt.Errorf("failed to merge single pages safely: %w", err)
-	}
+	// Calculate booklet imposition layout (sheets of front/back sides)
+	sheets := CalculateBookletLayout(len(dbPages), config.SignatureSize)
+
+	// Create new PDF document
+	pdfDoc := gopdf.GoPdf{}
 
 	// Configure paper size
-	var paperSize string
+	var sheetWidth, sheetHeight float64
 	if strings.ToLower(config.PaperSize) == "letter" {
-		paperSize = "Letter"
+		// Letter Landscape: 792.00 x 612.00
+		sheetWidth = 792.00
+		sheetHeight = 612.00
 	} else {
-		paperSize = "A4"
+		// Default A4 Landscape: 841.89 x 595.28
+		sheetWidth = 841.89
+		sheetHeight = 595.28
 	}
 
-	// Map signature size to folio size (number of sheets per signature)
-	// pdfcpu groups signature pages as 4 * foliosize
-	folioSize := config.SignatureSize / 4
-	if folioSize <= 0 {
-		folioSize = 1
+	pdfDoc.Start(gopdf.Config{PageSize: gopdf.Rect{W: sheetWidth, H: sheetHeight}})
+
+	// Calculate layout metrics
+	margin := config.Margin
+	gutter := config.Gutter
+
+	availWidth := sheetWidth - (2 * margin) - gutter
+	slotWidth := availWidth / 2
+	availHeight := sheetHeight - (2 * margin)
+
+	// Draw sheets
+	for _, sheet := range sheets {
+		pdfDoc.AddPage()
+
+		// Helper function to draw page inside a slot (left or right)
+		drawPageInSlot := func(pageNum int, isRightSlot bool) error {
+			if pageNum == 0 {
+				// Blank/padded page, don't draw anything
+				return nil
+			}
+
+			// Since pageNum is 1-based original page index
+			dbPage, exists := pagesMap[pageNum]
+			if !exists {
+				return nil // Page out of scope
+			}
+			localPath := filepath.Join(tempDir, fmt.Sprintf("page_%d.pdf", pageNum))
+
+			// Calculate slot bounds
+			var slotX float64
+			if isRightSlot {
+				slotX = margin + slotWidth + gutter
+			} else {
+				slotX = margin
+			}
+			slotY := margin
+
+			// Calculate scale factors to fit page within slot (keep aspect ratio)
+			scaleW := slotWidth / dbPage.Width
+			scaleH := availHeight / dbPage.Height
+			scale := math.Min(scaleW, scaleH)
+
+			drawW := dbPage.Width * scale
+			drawH := dbPage.Height * scale
+
+			// Center page inside the slot
+			offsetX := slotX + (slotWidth-drawW)/2
+			offsetY := slotY + (availHeight-drawH)/2
+
+			// Import and place template
+			tplID := pdfDoc.ImportPage(localPath, 1, "/MediaBox")
+			pdfDoc.UseImportedTemplate(tplID, offsetX, offsetY, drawW, drawH)
+
+			return nil
+		}
+
+		// Draw Left Page
+		if err := drawPageInSlot(sheet.LeftPage, false); err != nil {
+			return "", err
+		}
+
+		// Draw Right Page
+		if err := drawPageInSlot(sheet.RightPage, true); err != nil {
+			return "", err
+		}
+
+		// Draw folding guidelines if enabled
+		if config.Guides {
+			pdfDoc.SetLineWidth(0.5)
+			pdfDoc.SetStrokeColor(180, 180, 180)
+			pdfDoc.SetLineType("dashed")
+			pdfDoc.Line(sheetWidth/2, 0, sheetWidth/2, sheetHeight)
+			pdfDoc.SetLineType("solid")
+		}
 	}
 
-	// Build N-Up/Booklet configuration description string
-	// pdfcpu takes margin in points
-	desc := fmt.Sprintf("formsize:%s, margin:%.2f, multifolio:on, foliosize:%d", paperSize, config.Margin, folioSize)
-
-	nup, err := api.PDFBookletConfig(2, desc, nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to configure pdfcpu booklet: %w", err)
-	}
-
-	// Generate booklet PDF using pdfcpu booklet engine
+	// Write compiled PDF to local temp file
 	bookletID := uuid.New().String()
 	localOutPath := filepath.Join(tempDir, fmt.Sprintf("booklet_%s.pdf", bookletID))
-
-	conf := model.NewDefaultConfiguration()
-	conf.ValidationMode = model.ValidationRelaxed
-	conf.Limits.MaxRecursionDepth = 10000
-	err = api.BookletFile([]string{tempMergedPath}, localOutPath, nil, nup, conf)
+	
+	err = pdfDoc.WritePdf(localOutPath)
 	if err != nil {
-		return "", fmt.Errorf("pdfcpu booklet generation failed: %w", err)
+		return "", fmt.Errorf("failed to write compiled PDF: %w", err)
 	}
 
 	// Upload compiled booklet to MinIO
@@ -317,59 +383,26 @@ func CompileBooklet(ctx context.Context, dbPages []DBPageInfo, config BookletCon
 	return storageKey, nil
 }
 
-// FilterBookletPages extracts a subset of pages from a compiled booklet (fronts-only, backs-only, or custom sheet range)
-func FilterBookletPages(ctx context.Context, bookletStoragePath string, filterType string, sheetRange string) (string, error) {
-	log.Printf("[FilterBookletPages] Starting for booklet %s, filterType=%s, sheetRange=%s", bookletStoragePath, filterType, sheetRange)
+// CompileBookletSlice compiles only specific physical sheets and/or sides (fronts/backs) of a booklet directly from single pages
+func CompileBookletSlice(ctx context.Context, dbPages []DBPageInfo, config BookletConfig, filterType string, sheetRange string) (string, error) {
+	log.Printf("[CompileBookletSlice] Compiling slice for signatureSize=%d, filterType=%s, sheetRange=%s", config.SignatureSize, filterType, sheetRange)
 	
-	// Create a temp directory
-	tempDir, err := os.MkdirTemp("", "booklet-filter-*")
+	// Create a temp directory for downloaded single pages
+	tempDir, err := os.MkdirTemp("", "booklet-compile-slice-*")
 	if err != nil {
-		log.Printf("[FilterBookletPages] Error creating temp dir: %v", err)
 		return "", fmt.Errorf("failed to create temp dir: %w", err)
 	}
-	defer func() {
-		log.Printf("[FilterBookletPages] Cleaning up temp dir: %s", tempDir)
-		os.RemoveAll(tempDir)
-	}()
+	defer os.RemoveAll(tempDir)
 
-	// Download original compiled booklet
-	localBookletPath := filepath.Join(tempDir, "booklet.pdf")
-	log.Printf("[FilterBookletPages] Downloading booklet from storage path: %s -> %s", bookletStoragePath, localBookletPath)
-	err = storage.DownloadFile(ctx, bookletStoragePath, localBookletPath)
-	if err != nil {
-		log.Printf("[FilterBookletPages] Error downloading booklet: %v", err)
-		return "", err
-	}
+	// Sort database pages sequentially by page number
+	sort.Slice(dbPages, func(i, j int) bool {
+		return dbPages[i].PageNumber < dbPages[j].PageNumber
+	})
 
-	// Inspect booklet file size
-	fi, err := os.Stat(localBookletPath)
-	if err != nil {
-		log.Printf("[FilterBookletPages] Error stating local booklet: %v", err)
-		return "", fmt.Errorf("failed to stat local booklet: %w", err)
-	}
-	log.Printf("[FilterBookletPages] Local booklet size: %d bytes", fi.Size())
-
-	// Open booklet to get page count using dslipak/pdf (pure Go reader, no strict validation)
-	log.Printf("[FilterBookletPages] Parsing page count with dslipak/pdf reader...")
-	fBooklet, err := os.Open(localBookletPath)
-	if err != nil {
-		log.Printf("[FilterBookletPages] Error opening local booklet for parsing: %v", err)
-		return "", fmt.Errorf("failed to open booklet file: %w", err)
-	}
-	pdfReader, err := pdf.NewReader(fBooklet, fi.Size())
-	if err != nil {
-		fBooklet.Close()
-		log.Printf("[FilterBookletPages] Error creating dslipak/pdf reader: %v", err)
-		return "", fmt.Errorf("failed to parse booklet with pdf reader: %w", err)
-	}
-	totalBookletPages := pdfReader.NumPage()
-	fBooklet.Close()
-
-	log.Printf("[FilterBookletPages] Successfully read booklet page count using dslipak/pdf: %d pages", totalBookletPages)
-
-	// Total sheets is totalBookletPages / 2
+	// Calculate all booklet sheets first
+	allSides := CalculateBookletLayout(len(dbPages), config.SignatureSize)
+	totalBookletPages := len(allSides)
 	totalSheets := totalBookletPages / 2
-	log.Printf("[FilterBookletPages] Calculated total sheets: %d", totalSheets)
 
 	// Determine start and end sheets (1-based indices)
 	startSheet := 1
@@ -390,7 +423,6 @@ func FilterBookletPages(ctx context.Context, bookletStoragePath string, filterTy
 				endSheet = e
 			}
 		}
-		log.Printf("[FilterBookletPages] Parsed sheet range: %s -> startSheet=%d, endSheet=%d", sheetRange, startSheet, endSheet)
 	}
 
 	// Validate sheet ranges
@@ -401,55 +433,168 @@ func FilterBookletPages(ctx context.Context, bookletStoragePath string, filterTy
 		endSheet = totalSheets
 	}
 	if startSheet > endSheet {
-		log.Printf("[FilterBookletPages] Invalid sheet range computed: startSheet=%d > endSheet=%d", startSheet, endSheet)
 		return "", fmt.Errorf("invalid sheet range: %s", sheetRange)
 	}
 
-	log.Printf("[FilterBookletPages] Final validated sheet range: startSheet=%d, endSheet=%d", startSheet, endSheet)
-
-	// Collect the exact list of booklet page numbers (1-based) to extract
-	var selectedPagesStr []string
-
+	// Select the sides we want to render
+	var selectedSides []SheetSide
 	for sheetNum := startSheet; sheetNum <= endSheet; sheetNum++ {
-		frontPageNum := 2*sheetNum - 1
-		backPageNum := 2 * sheetNum
+		frontIdx := 2 * (sheetNum - 1)
+		backIdx := 2*(sheetNum - 1) + 1
 
 		switch strings.ToLower(filterType) {
 		case "fronts":
-			selectedPagesStr = append(selectedPagesStr, strconv.Itoa(frontPageNum))
+			if frontIdx < len(allSides) {
+				selectedSides = append(selectedSides, allSides[frontIdx])
+			}
 		case "backs":
-			selectedPagesStr = append(selectedPagesStr, strconv.Itoa(backPageNum))
+			if backIdx < len(allSides) {
+				selectedSides = append(selectedSides, allSides[backIdx])
+			}
 		default:
-			selectedPagesStr = append(selectedPagesStr, strconv.Itoa(frontPageNum), strconv.Itoa(backPageNum))
+			if frontIdx < len(allSides) {
+				selectedSides = append(selectedSides, allSides[frontIdx])
+			}
+			if backIdx < len(allSides) {
+				selectedSides = append(selectedSides, allSides[backIdx])
+			}
 		}
 	}
 
-	log.Printf("[FilterBookletPages] Selected booklet page indices: %v", selectedPagesStr)
-
-	if len(selectedPagesStr) == 0 {
-		log.Printf("[FilterBookletPages] Error: no pages selected by filter")
-		return "", fmt.Errorf("no pages selected by filter")
+	if len(selectedSides) == 0 {
+		return "", fmt.Errorf("no sheets selected by filter")
 	}
 
-	localFilteredPath := filepath.Join(tempDir, "filtered.pdf")
-
-	log.Printf("[FilterBookletPages] Slicing pages using pdfcpu.CollectFile...")
-	conf := model.NewDefaultConfiguration()
-	conf.ValidationMode = model.ValidationRelaxed
-	conf.Limits.MaxRecursionDepth = 10000 // Raise recursion limit for booklet page slicing/collection
-	err = api.CollectFile(localBookletPath, localFilteredPath, selectedPagesStr, conf)
-	if err != nil {
-		log.Printf("[FilterBookletPages] pdfcpu collect failed: %v", err)
-		return "", fmt.Errorf("pdfcpu collect failed: %w", err)
+	// Find the exact pages we need to download
+	pagesMap := make(map[int]DBPageInfo)
+	for _, dbPage := range dbPages {
+		pagesMap[dbPage.PageNumber] = dbPage
 	}
-	log.Printf("[FilterBookletPages] pdfcpu collect succeeded")
 
-	// Upload filtered PDF to MinIO
-	filteredID := uuid.New().String()
-	storageKey := fmt.Sprintf("temp_filtered/%s.pdf", filteredID)
-	err = storage.UploadFile(ctx, storageKey, localFilteredPath, "application/pdf")
+	neededPages := make(map[int]bool)
+	for _, side := range selectedSides {
+		if side.LeftPage > 0 {
+			neededPages[side.LeftPage] = true
+		}
+		if side.RightPage > 0 {
+			neededPages[side.RightPage] = true
+		}
+	}
+
+	// Download only the needed single pages
+	for pageNum := range neededPages {
+		dbPage, exists := pagesMap[pageNum]
+		if !exists {
+			continue
+		}
+		localPath := filepath.Join(tempDir, fmt.Sprintf("page_%d.pdf", pageNum))
+		err := storage.DownloadFile(ctx, dbPage.StoragePath, localPath)
+		if err != nil {
+			return "", fmt.Errorf("failed to download page %d: %w", pageNum, err)
+		}
+	}
+
+	// Create new PDF document
+	pdfDoc := gopdf.GoPdf{}
+
+	// Configure paper size
+	var sheetWidth, sheetHeight float64
+	if strings.ToLower(config.PaperSize) == "letter" {
+		sheetWidth = 792.00
+		sheetHeight = 612.00
+	} else {
+		sheetWidth = 841.89
+		sheetHeight = 595.28
+	}
+
+	pdfDoc.Start(gopdf.Config{PageSize: gopdf.Rect{W: sheetWidth, H: sheetHeight}})
+
+	// Calculate layout metrics
+	margin := config.Margin
+	gutter := config.Gutter
+
+	availWidth := sheetWidth - (2 * margin) - gutter
+	slotWidth := availWidth / 2
+	availHeight := sheetHeight - (2 * margin)
+
+	// Draw selected sheet sides
+	for _, sheet := range selectedSides {
+		pdfDoc.AddPage()
+
+		// Helper function to draw page inside a slot (left or right)
+		drawPageInSlot := func(pageNum int, isRightSlot bool) error {
+			if pageNum == 0 {
+				return nil
+			}
+
+			dbPage, exists := pagesMap[pageNum]
+			if !exists {
+				return nil
+			}
+			localPath := filepath.Join(tempDir, fmt.Sprintf("page_%d.pdf", pageNum))
+
+			// Calculate slot bounds
+			var slotX float64
+			if isRightSlot {
+				slotX = margin + slotWidth + gutter
+			} else {
+				slotX = margin
+			}
+			slotY := margin
+
+			// Calculate scale factors
+			scaleW := slotWidth / dbPage.Width
+			scaleH := availHeight / dbPage.Height
+			scale := math.Min(scaleW, scaleH)
+
+			drawW := dbPage.Width * scale
+			drawH := dbPage.Height * scale
+
+			// Center page inside the slot
+			offsetX := slotX + (slotWidth-drawW)/2
+			offsetY := slotY + (availHeight-drawH)/2
+
+			// Import and place template
+			tplID := pdfDoc.ImportPage(localPath, 1, "/MediaBox")
+			pdfDoc.UseImportedTemplate(tplID, offsetX, offsetY, drawW, drawH)
+
+			return nil
+		}
+
+		// Draw Left Page
+		if err := drawPageInSlot(sheet.LeftPage, false); err != nil {
+			return "", err
+		}
+
+		// Draw Right Page
+		if err := drawPageInSlot(sheet.RightPage, true); err != nil {
+			return "", err
+		}
+
+		// Draw folding guidelines if enabled
+		if config.Guides {
+			pdfDoc.SetLineWidth(0.5)
+			pdfDoc.SetStrokeColor(180, 180, 180)
+			pdfDoc.SetLineType("dashed")
+			pdfDoc.Line(sheetWidth/2, 0, sheetWidth/2, sheetHeight)
+			pdfDoc.SetLineType("solid")
+		}
+	}
+
+	// Write compiled PDF slice to local temp file
+	sliceID := uuid.New().String()
+	localOutPath := filepath.Join(tempDir, fmt.Sprintf("slice_%s.pdf", sliceID))
+	
+	err = pdfDoc.WritePdf(localOutPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to upload filtered PDF: %w", err)
+		return "", fmt.Errorf("failed to write compiled PDF slice: %w", err)
+	}
+
+	// Upload compiled slice to MinIO
+	storageKey := fmt.Sprintf("temp_filtered/%s.pdf", sliceID)
+	err = storage.UploadFile(ctx, storageKey, localOutPath, "application/pdf")
+	if err != nil {
+		return "", fmt.Errorf("failed to upload booklet slice to MinIO: %w", err)
 	}
 
 	return storageKey, nil

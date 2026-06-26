@@ -8,16 +8,18 @@ import { Select } from "./ui/select"
 import { Label } from "./ui/label"
 import { ScrollArea } from "./ui/scroll-area"
 import { PrintHelper } from "./PrintHelper"
-import { 
-  UploadCloud, 
-  FileText, 
-  Settings, 
-  Loader2, 
-  Printer, 
-  Download, 
+import { PDFPageRenderer } from "./PDFPageRenderer"
+import {
+  UploadCloud,
+  FileText,
+  Settings,
+  Loader2,
+  Printer,
+  Download,
   AlertCircle,
   FileCheck,
-  X
+  X,
+  Eye
 } from "lucide-react"
 
 type PendingUpload = {
@@ -39,13 +41,15 @@ export const Dashboard: React.FC = () => {
   const queryClient = useQueryClient()
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null)
   const [activeBookletId, setActiveBookletId] = useState<string | null>(null)
-  
+
   // Custom booklet parameters
   const [margin, setMargin] = useState<number>(12)
   const [gutter, setGutter] = useState<number>(24)
   const [paperSize, setPaperSize] = useState<string>("a4")
   const [signatureSize, setSignatureSize] = useState<number>(4)
-  
+  const [guides, setGuides] = useState<boolean>(true)
+  const [dashboardPreviewSide, setDashboardPreviewSide] = useState<"front" | "back">("front")
+
   const [compiling, setCompiling] = useState<boolean>(false)
   const [compileStatus, setCompileStatus] = useState<string>("")
   const [pollingBookletId, setPollingBookletId] = useState<string | null>(null)
@@ -164,7 +168,7 @@ export const Dashboard: React.FC = () => {
 
   const dismissFailedUpload = async (id: string) => {
     setFailedUploads((current) => current.filter((item) => item.id !== id))
-    
+
     const uuidMatch = id.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)
     if (uuidMatch) {
       const docId = uuidMatch[0]
@@ -193,6 +197,7 @@ export const Dashboard: React.FC = () => {
       gutter,
       paper_size: paperSize,
       signature_size: signatureSize,
+      guides,
     }),
     onSuccess: (data) => {
       setPollingBookletId(data.booklet_id)
@@ -238,9 +243,12 @@ export const Dashboard: React.FC = () => {
   // Reset active booklet mode
   if (activeBookletId && docDetail) {
     return (
-      <PrintHelper 
-        bookletId={activeBookletId} 
+      <PrintHelper
+        bookletId={activeBookletId}
+        documentId={selectedDocId!}
         totalPages={docDetail.total_pages}
+        signatureSize={signatureSize}
+        pages={docDetail.pages}
         onBack={() => {
           setActiveBookletId(null)
           setCompileStatus("")
@@ -255,14 +263,14 @@ export const Dashboard: React.FC = () => {
       <div className="lg:col-span-1 space-y-6">
         <div className="glass p-6 rounded-2xl border-border space-y-4">
           <h3 className="text-lg font-bold text-foreground m-0">Upload Document</h3>
-          
+
           <div className="relative border-2 border-dashed border-border rounded-xl p-8 flex flex-col items-center justify-center gap-2 hover:border-primary/50 transition-all bg-background/40 group">
             <UploadCloud className="h-10 w-10 text-muted-foreground group-hover:text-primary transition-colors" aria-hidden="true" />
             <span className="text-muted-foreground text-xs font-medium">Drag & drop your PDF file or click to browse</span>
-            <Input 
+            <Input
               id="pdf-file-upload"
-              type="file" 
-              accept=".pdf" 
+              type="file"
+              accept=".pdf"
               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
               onChange={handleFileChange}
               disabled={uploadMutation.isPending}
@@ -359,13 +367,12 @@ export const Dashboard: React.FC = () => {
                       variant="ghost"
                       onClick={() => doc.status === "ready" && setSelectedDocId(doc.id)}
                       disabled={doc.status !== "ready"}
-                      className={`w-full text-left h-auto p-3.5 rounded-xl border flex items-center justify-between gap-4 cursor-pointer transition-all whitespace-normal ${
-                        isSelected
+                      className={`w-full text-left h-auto p-3.5 rounded-xl border flex items-center justify-between gap-4 cursor-pointer transition-all whitespace-normal ${isSelected
                           ? "bg-primary/10 border-primary/30"
                           : effectiveStatus === "processing"
                             ? "bg-muted/30 border-border opacity-60 cursor-not-allowed"
                             : "bg-background/60 border-border hover:border-primary/25"
-                      }`}
+                        }`}
                     >
                       <div className="flex items-center gap-3 min-w-0">
                         <div className={`p-2 rounded-lg ${isSelected ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"}`}>
@@ -405,59 +412,118 @@ export const Dashboard: React.FC = () => {
               <p className="text-muted-foreground text-xs mt-1">Uploaded {new Date(docDetail.created_at).toLocaleDateString()}</p>
             </div>
 
-            <div className="border-t border-border pt-6 space-y-4">
-              <div className="flex items-center gap-2">
-                <Settings className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
-                <h3 className="text-base font-bold text-foreground m-0">Booklet Imposition Config</h3>
+            <div className="border-t border-border pt-4 space-y-3">
+              <div className="flex items-center justify-between border-b border-border/40 pb-2">
+                <div className="flex items-center gap-2">
+                  <Settings className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                  <h3 className="text-sm font-bold text-foreground m-0">Booklet Imposition Config</h3>
+                </div>
+                <div className="flex bg-muted p-0.5 rounded border border-border text-[9px] font-bold">
+                  <button
+                    type="button"
+                    onClick={() => setDashboardPreviewSide("front")}
+                    className={`px-1.5 py-0.5 rounded transition-all ${dashboardPreviewSide === "front" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                      }`}
+                  >
+                    Front Side
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDashboardPreviewSide("back")}
+                    className={`px-1.5 py-0.5 rounded transition-all ${dashboardPreviewSide === "back" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                      }`}
+                  >
+                    Back Side
+                  </button>
+                </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <Label htmlFor="margin-input" className="text-xs font-semibold text-muted-foreground">Outer Margins (Points)</Label>
-                  <Input 
+              {/* Mock Sheet Container - LOOKS LIKE PAPER: no corner radius, drop shadow. MOVED TO TOP */}
+              <div className="relative aspect-[1.5/1] w-full bg-white border border-neutral-300 shadow-[0_6px_16px_rgba(0,0,0,0.12)] flex items-center justify-center overflow-hidden">
+                <PDFPageRenderer
+                  url={api.getBookletPreviewUrl(selectedDocId!, margin, gutter, paperSize, signatureSize, guides, dashboardPreviewSide)}
+                  className="w-full h-full"
+                  rotation={0}
+                />
+              </div>
+
+              {/* Compact Spacing Sliders and dropdowns inline on a single row */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
+                <div className="space-y-1">
+                  <Label htmlFor="margin-input" className="text-[10px] font-semibold text-muted-foreground uppercase">Margins: <span className="text-foreground font-bold">{margin}pt</span></Label>
+                  <input
                     id="margin-input"
-                    type="number" 
-                    value={margin} 
-                    onChange={(e) => setMargin(parseFloat(e.target.value) || 0)} 
+                    type="range"
+                    min="0"
+                    max="72"
+                    step="1"
+                    value={margin}
+                    onChange={(e) => setMargin(parseFloat(e.target.value) || 0)}
+                    className="w-full h-1 bg-muted rounded appearance-none cursor-pointer accent-primary"
                   />
-                  <p className="text-[10px] text-muted-foreground">Spacing around page edges. 72pt = 1 inch.</p>
                 </div>
 
-                <div className="space-y-1.5">
-                  <Label htmlFor="gutter-input" className="text-xs font-semibold text-muted-foreground">Inner Gutter (Points)</Label>
-                  <Input 
+                <div className="space-y-1">
+                  <Label htmlFor="gutter-input" className="text-[10px] font-semibold text-muted-foreground uppercase">Gutter: <span className="text-foreground font-bold">{gutter}pt</span></Label>
+                  <input
                     id="gutter-input"
-                    type="number" 
-                    value={gutter} 
-                    onChange={(e) => setGutter(parseFloat(e.target.value) || 0)} 
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="1"
+                    value={gutter}
+                    onChange={(e) => setGutter(parseFloat(e.target.value) || 0)}
+                    className="w-full h-1 bg-muted rounded appearance-none cursor-pointer accent-primary"
                   />
-                  <p className="text-[10px] text-muted-foreground">Spacing between side-by-side pages.</p>
                 </div>
 
-                <div className="space-y-1.5">
-                  <Label htmlFor="paper-size-select" className="text-xs font-semibold text-muted-foreground">Paper Format (Landscape)</Label>
-                  <Select id="paper-size-select" value={paperSize} onChange={(e) => setPaperSize(e.target.value)}>
+                <div className="space-y-0.5">
+                  <Label htmlFor="paper-size-select" className="text-[10px] font-semibold text-muted-foreground uppercase">Paper Format</Label>
+                  <Select id="paper-size-select" value={paperSize} onChange={(e) => setPaperSize(e.target.value)} className="h-7 text-xs py-0">
                     <option value="a4">A4 Landscape</option>
                     <option value="letter">Letter Landscape</option>
                   </Select>
-                  <p className="text-[10px] text-muted-foreground">Dimensions of final booklet sheet.</p>
                 </div>
 
-                <div className="space-y-1.5">
-                  <Label htmlFor="signature-size-select" className="text-xs font-semibold text-muted-foreground">Signature Size</Label>
-                  <Select id="signature-size-select" value={signatureSize.toString()} onChange={(e) => setSignatureSize(parseInt(e.target.value))}>
+                <div className="space-y-0.5">
+                  <Label htmlFor="signature-size-select" className="text-[10px] font-semibold text-muted-foreground uppercase">Signature Size</Label>
+                  <Select id="signature-size-select" value={signatureSize.toString()} onChange={(e) => setSignatureSize(parseInt(e.target.value))} className="h-7 text-xs py-0">
                     <option value="4">4 Pages (1 sheet)</option>
                     <option value="8">8 Pages (2 sheets)</option>
                     <option value="12">12 Pages (3 sheets)</option>
                     <option value="16">16 Pages (4 sheets)</option>
                   </Select>
-                  <p className="text-[10px] text-muted-foreground">Grouping count for folding/binding.</p>
                 </div>
               </div>
 
+              {/* Bottom Row: Checkbox and Compile Button inline */}
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-2 border-t border-border/30">
+                <div className="flex items-center gap-2">
+                  <input
+                    id="guides-checkbox"
+                    type="checkbox"
+                    checked={guides}
+                    onChange={(e) => setGuides(e.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-border text-primary focus:ring-primary bg-background cursor-pointer"
+                  />
+                  <Label htmlFor="guides-checkbox" className="text-xs font-semibold text-foreground cursor-pointer">
+                    Draw Folding &amp; Cutting Guides
+                  </Label>
+                </div>
+
+                <Button
+                  className="sm:w-auto h-8 px-4 font-bold flex items-center justify-center gap-1.5 text-xs shadow-md shadow-primary/10"
+                  onClick={() => compileMutation.mutate(selectedDocId!)}
+                  disabled={compiling}
+                >
+                  <Printer className="h-3.5 w-3.5" aria-hidden="true" />
+                  Compile &amp; Generate Layout
+                </Button>
+              </div>
+
               {compiling && (
-                <div className="flex items-center gap-3 bg-background/80 p-4 rounded-xl border border-border">
-                  <Loader2 className="h-5 w-5 animate-spin text-primary" aria-hidden="true" />
+                <div className="flex items-center gap-3 bg-background/80 p-3 rounded-xl border border-border">
+                  <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden="true" />
                   <div className="text-xs">
                     <p className="font-bold text-foreground">Compiling Booklet...</p>
                     <p className="text-muted-foreground mt-0.5">{compileStatus}</p>
@@ -466,22 +532,11 @@ export const Dashboard: React.FC = () => {
               )}
 
               {!compiling && compileStatus && (
-                <div className="p-4 bg-destructive/10 border border-destructive/20 text-destructive rounded-xl text-xs flex items-center gap-2">
-                  <AlertCircle className="h-4 w-4" aria-hidden="true" />
+                <div className="p-3 bg-destructive/10 border border-destructive/20 text-destructive rounded-xl text-xs flex items-center gap-2">
+                  <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
                   <span>{compileStatus}</span>
                 </div>
               )}
-
-              <div className="pt-2">
-                <Button 
-                  className="w-full py-5 font-bold flex items-center justify-center gap-2 shadow-lg shadow-primary/20"
-                  onClick={() => compileMutation.mutate(selectedDocId!)}
-                  disabled={compiling}
-                >
-                  <Printer className="h-4 w-4" aria-hidden="true" />
-                  Compile &amp; Generate Booklet Layout
-                </Button>
-              </div>
             </div>
           </div>
         ) : (

@@ -1,31 +1,37 @@
 import React, { useState } from "react"
 import { api } from "../api"
+import { PDFPageRenderer } from "./PDFPageRenderer"
 import { Button } from "./ui/button"
 import { Card } from "./ui/card"
-import { Select } from "./ui/select"
-import { Input } from "./ui/input"
 import { Label } from "./ui/label"
 import { ScrollArea } from "./ui/scroll-area"
-import { 
-  Printer, 
-  RotateCw, 
-  AlertTriangle, 
-  CheckCircle2, 
-  FileDown, 
+import {
+  Printer,
+  RotateCw,
+  AlertTriangle,
+  CheckCircle2,
+  FileDown,
   HelpCircle,
-  RefreshCw
+  RefreshCw,
+  Eye,
+  BookOpen
 } from "lucide-react"
 
 interface PrintHelperProps {
   bookletId: string;
+  documentId: string;
   totalPages: number; // original PDF pages
+  signatureSize: number;
+  pages: { page_number: number; text_preview: string }[];
   onBack: () => void;
 }
 
-export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages, onBack }) => {
+export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, documentId, totalPages, signatureSize, pages, onBack }) => {
   const [batchSize, setBatchSize] = useState<number>(10)
   const [completedBatches, setCompletedBatches] = useState<Record<number, boolean>>({})
-  
+  const [selectedSheet, setSelectedSheet] = useState<number>(1)
+  const [previewSide, setPreviewSide] = useState<"front" | "back">("front")
+
   // Recovery states
   const [ruinedStart, setRuinedStart] = useState<string>("")
   const [ruinedEnd, setRuinedEnd] = useState<string>("")
@@ -33,8 +39,6 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
 
   // Total sheets in booklet is Ceil(totalPages / 4).
   // Target pages is Ceil(totalPages / 4) * 4.
-  // Since each physical sheet of paper contains 4 original document pages,
-  // Total sheets = Target Pages / 4.
   const targetPages = Math.ceil(totalPages / 4) * 4
   const totalSheets = targetPages / 4
   const maxBookletPage = targetPages / 2
@@ -75,259 +79,346 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
 
     const rangeStr = `${start}-${end}`
     const downloadUrl = api.getDownloadUrl(bookletId, type === "both" ? undefined : type, undefined, rangeStr)
-    
-    // Open in a new tab to trigger download
     window.open(downloadUrl, "_blank")
   }
 
+  // Calculate pages for a given physical sheet
+  const getPagesForSheet = (sheetIndex: number) => {
+    const sheetsPerSignature = signatureSize / 4
+    const signatureIndex = Math.floor((sheetIndex - 1) / sheetsPerSignature)
+    const s = ((sheetIndex - 1) % sheetsPerSignature) + 1 // 1-indexed sheet within signature
+    const offset = signatureIndex * signatureSize
+
+    const frontLeft = offset + (signatureSize - 2 * (s - 1))
+    const frontRight = offset + (2 * (s - 1) + 1)
+    const backLeft = offset + (2 * (s - 1) + 2)
+    const backRight = offset + (signatureSize - 2 * (s - 1) - 1)
+
+    const getSnippet = (num: number) => {
+      if (num > totalPages) return null
+      const p = pages.find(item => item.page_number === num)
+      return p ? p.text_preview : ""
+    }
+
+    return {
+      front: {
+        rawLeft: frontLeft,
+        rawRight: frontRight,
+        snippetLeft: getSnippet(frontLeft),
+        snippetRight: getSnippet(frontRight),
+      },
+      back: {
+        rawLeft: backLeft,
+        rawRight: backRight,
+        snippetLeft: getSnippet(backLeft),
+        snippetRight: getSnippet(backRight),
+      }
+    }
+  }
+
+  const activePages = getPagesForSheet(selectedSheet)
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-4">
+      {/* Header Row */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-background/30 p-3 rounded-xl border border-border/50">
         <div>
-          <h2 className="text-2xl font-bold text-foreground m-0">Printing Guide & Helper</h2>
-          <p className="text-muted-foreground text-sm mt-1">Manual duplex optimization & recovery wizard for booklet ID: {bookletId.slice(0, 8)}...</p>
+          <h2 className="text-xl font-bold text-foreground flex items-center gap-2">
+            <Printer className="h-5 w-5 text-primary" />
+            Printing Guide &amp; Helper
+          </h2>
+          <p className="text-muted-foreground text-xs">
+            Booklet ID: <code className="text-primary font-mono text-[11px]">{bookletId.slice(0, 8)}</code> &bull; Signature size: {signatureSize}
+          </p>
         </div>
-        <Button variant="outline" size="sm" onClick={onBack}>
+        <Button variant="outline" size="sm" onClick={onBack} className="self-start sm:self-auto text-xs">
           Back to Dashboard
         </Button>
       </div>
 
-      {/* Overview stats */}
-      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 glass px-4 py-2.5 rounded-xl border border-border text-sm">
-        <div className="flex items-center gap-2">
-          <span className="text-muted-foreground text-xs font-semibold uppercase tracking-wider">Original Pages</span>
-          <span className="font-extrabold text-foreground">{totalPages}</span>
+      {/* Stats Row */}
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 glass px-4 py-2 rounded-xl border border-border text-xs">
+        <div className="flex items-center gap-1.5">
+          <span className="text-muted-foreground font-medium">Original PDF:</span>
+          <span className="font-bold text-foreground">{totalPages} pages</span>
         </div>
-        <div className="hidden sm:block h-4 w-px bg-border" />
-        <div className="flex items-center gap-2">
-          <span className="text-muted-foreground text-xs font-semibold uppercase tracking-wider">Padded Booklet Pages</span>
-          <span className="font-extrabold text-primary">{targetPages}</span>
+        <div className="h-3.5 w-px bg-border" />
+        <div className="flex items-center gap-1.5">
+          <span className="text-muted-foreground font-medium">Layout Sheets:</span>
+          <span className="font-bold text-primary">{totalSheets} sheets</span>
         </div>
-        <div className="hidden sm:block h-4 w-px bg-border" />
-        <div className="flex items-center gap-2">
-          <span className="text-muted-foreground text-xs font-semibold uppercase tracking-wider">Total Sheets</span>
-          <span className="font-extrabold text-accent">{totalSheets}</span>
+        <div className="h-3.5 w-px bg-border" />
+        <div className="flex items-center gap-1.5">
+          <span className="text-muted-foreground font-medium">Total Printable Pages:</span>
+          <span className="font-bold text-accent">{targetPages} pages</span>
         </div>
-        <div className="hidden sm:block h-4 w-px bg-border" />
-        <div className="flex items-center gap-2">
-          <span className="text-muted-foreground text-xs font-semibold uppercase tracking-wider">Estimated Signatures</span>
-          <span className="font-extrabold text-foreground">{Math.ceil(totalSheets / 4)}</span>
+        <div className="h-3.5 w-px bg-border text-muted-foreground/30" />
+        <div className="flex items-center gap-1.5">
+          <span className="text-muted-foreground font-medium">Total Signatures:</span>
+          <span className="font-bold text-foreground">{Math.ceil(totalSheets / (signatureSize / 4))}</span>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Step-by-step Batch Printing Column */}
-        <div className="lg:col-span-2 space-y-6">
-          <div className="glass p-6 rounded-2xl border-border space-y-4">
-            <div className="flex items-center justify-between border-b border-border pb-4">
+      {/* Main Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+
+        {/* Left Console Column */}
+        <div className="lg:col-span-7 space-y-4">
+          <div className="glass p-4 rounded-xl border-border space-y-3">
+            <div className="flex items-center justify-between border-b border-border/50 pb-2">
               <div className="flex items-center gap-2">
-                <Printer className="h-5 w-5 text-primary" aria-hidden="true" />
-                <h3 className="text-lg font-bold text-foreground m-0">Batch Printing Console</h3>
+                <BookOpen className="h-4 w-4 text-primary" />
+                <h3 className="text-sm font-bold text-foreground">Print Batches</h3>
               </div>
-              <div className="flex items-center gap-3">
-                <Label htmlFor="batch-size-select" className="text-muted-foreground text-xs font-medium">Batch size:</Label>
-                <div className="w-24">
-                  <Select 
-                    id="batch-size-select"
-                    value={batchSize.toString()} 
-                    onChange={(e) => {
-                      setBatchSize(parseInt(e.target.value))
-                      setCompletedBatches({})
-                    }}
-                  >
-                    <option value="5">5 Sheets</option>
-                    <option value="10">10 Sheets</option>
-                    <option value="20">20 Sheets</option>
-                    <option value="50">50 Sheets</option>
-                    <option value={totalSheets.toString()}>All ({totalSheets})</option>
-                  </Select>
-                </div>
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground text-[11px]">Batch size:</span>
+                <select
+                  value={batchSize}
+                  onChange={(e) => {
+                    setBatchSize(parseInt(e.target.value))
+                    setCompletedBatches({})
+                    setSelectedSheet(1)
+                  }}
+                  className="bg-background border border-border rounded px-1.5 py-0.5 text-xs font-semibold text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value={5}>5 Sheets</option>
+                  <option value={10}>10 Sheets</option>
+                  <option value={20}>20 Sheets</option>
+                  <option value={totalSheets}>All ({totalSheets})</option>
+                </select>
               </div>
             </div>
 
-            <p className="text-foreground/80 text-xs leading-relaxed">
-              We recommend printing in batches of 10 or 20 sheets. That way, if a paper jam or double-feed occurs during the back-side print, you only waste a few sheets instead of the entire document.
-            </p>
-
-            <ScrollArea className="max-h-[450px]">
-              <div className="space-y-3 pr-4">
-              {batches.map((batch) => {
-                const isDone = completedBatches[batch.id] || false;
-                return (
-                  <div 
-                    key={batch.id} 
-                    className={`p-4 rounded-xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-4 ${
-                      isDone 
-                        ? "bg-primary/10 border-primary/25" 
-                        : "bg-background/60 border-border hover:border-primary/25"
-                    }`}
-                  >
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-                          isDone ? "bg-accent/20 text-accent" : "bg-primary/20 text-primary"
-                        }`}>
-                          Batch {batch.id}
-                        </span>
-                        <h4 className="text-sm font-bold text-foreground m-0">
-                          Sheets {batch.startSheet} &ndash; {batch.endSheet}
-                        </h4>
-                      </div>
-                      <p className="text-muted-foreground text-xs">
-                        Prints booklet pages {2 * batch.startSheet - 1} to {2 * batch.endSheet}
-                      </p>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Button 
-                        variant="glass" 
-                        size="sm" 
-                        onClick={() => window.open(api.getDownloadUrl(bookletId, "fronts", `${batch.startSheet}-${batch.endSheet}`), "_blank")}
-                        disabled={isDone}
-                      >
-                        <FileDown className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                        1. Fronts (Odds)
-                      </Button>
-                      <Button 
-                        variant="glass" 
-                        size="sm" 
-                        onClick={() => window.open(api.getDownloadUrl(bookletId, "backs", `${batch.startSheet}-${batch.endSheet}`), "_blank")}
-                        disabled={isDone}
-                      >
-                        <FileDown className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                        2. Backs (Evens)
-                      </Button>
-                      <Button 
-                        onClick={() => toggleBatchComplete(batch.id)}
-                        variant="ghost"
-                        className={`p-2 rounded-lg border transition-all cursor-pointer ${
-                          isDone 
-                            ? "bg-accent/10 border-accent/30 text-accent hover:bg-accent/20" 
-                            : "bg-background border-border text-muted-foreground hover:text-foreground hover:bg-muted/70"
+            <ScrollArea className="max-h-[340px]">
+              <div className="space-y-2 pr-3.5">
+                {batches.map((batch) => {
+                  const isDone = completedBatches[batch.id] || false
+                  return (
+                    <div
+                      key={batch.id}
+                      className={`p-2.5 rounded-lg border transition-all flex items-center justify-between gap-3 text-xs ${isDone
+                        ? "bg-primary/5 border-primary/15 opacity-70"
+                        : "bg-background/40 border-border hover:border-primary/20"
                         }`}
-                        aria-label={isDone ? `Mark batch ${batch.id} incomplete` : `Mark batch ${batch.id} complete`}
-                        aria-pressed={isDone}
-                      >
-                        <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-                      </Button>
+                    >
+                      <div className="space-y-0.5 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${isDone ? "bg-accent/15 text-accent" : "bg-primary/15 text-primary"
+                            }`}>
+                            Batch {batch.id}
+                          </span>
+                          <span className="font-bold text-foreground truncate">
+                            Sheets {batch.startSheet} &ndash; {batch.endSheet}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1.5 text-muted-foreground text-[10px] mt-1">
+                          <span>Sheet:</span>
+                          <div className="flex flex-wrap items-center gap-1">
+                            {Array.from({ length: batch.endSheet - batch.startSheet + 1 }, (_, idx) => {
+                              const sNum = batch.startSheet + idx
+                              const isSelected = selectedSheet === sNum
+                              return (
+                                <button
+                                  key={sNum}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setSelectedSheet(sNum)
+                                  }}
+                                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold border transition-colors ${isSelected
+                                    ? "bg-primary text-primary-foreground border-primary"
+                                    : "bg-background/80 hover:bg-muted border-border text-muted-foreground"
+                                    }`}
+                                >
+                                  {sNum}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <Button
+                          variant="glass"
+                          size="xs"
+                          className="h-7 text-[11px] px-2 font-semibold"
+                          onClick={() => window.open(api.getDownloadUrl(bookletId, "fronts", `${batch.startSheet}-${batch.endSheet}`), "_blank")}
+                          disabled={isDone}
+                        >
+                          <FileDown className="mr-1 h-3 w-3" />
+                          Fronts
+                        </Button>
+                        <Button
+                          variant="glass"
+                          size="xs"
+                          className="h-7 text-[11px] px-2 font-semibold"
+                          onClick={() => window.open(api.getDownloadUrl(bookletId, "backs", `${batch.startSheet}-${batch.endSheet}`), "_blank")}
+                          disabled={isDone}
+                        >
+                          <FileDown className="mr-1 h-3 w-3" />
+                          Backs
+                        </Button>
+                        <Button
+                          onClick={() => toggleBatchComplete(batch.id)}
+                          variant="ghost"
+                          className={`h-7 w-7 p-0 rounded border transition-all cursor-pointer ${isDone
+                            ? "bg-accent/10 border-accent/25 text-accent hover:bg-accent/20"
+                            : "bg-background border-border text-muted-foreground hover:text-foreground hover:bg-muted"
+                            }`}
+                          aria-label={isDone ? "Mark batch incomplete" : "Mark batch complete"}
+                        >
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                )
-              })}
+                  )
+                })}
               </div>
             </ScrollArea>
           </div>
 
-          {/* Guide Card */}
-          <div className="glass p-6 rounded-2xl border-border space-y-4">
-            <div className="flex items-center gap-2 border-b border-border pb-4">
-              <HelpCircle className="h-5 w-5 text-primary" aria-hidden="true" />
-              <h3 className="text-lg font-bold text-foreground m-0">How to Manual Duplex Print</h3>
+          {/* Compact Instructions */}
+          <div className="glass p-4 rounded-xl border-border space-y-2">
+            <div className="flex items-center gap-1.5 border-b border-border/40 pb-1.5">
+              <HelpCircle className="h-4 w-4 text-primary" />
+              <h3 className="text-xs font-bold text-foreground">Duplex Printing Instructions</h3>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs text-foreground/80">
-              <div className="space-y-2">
-                <h4 className="font-bold uppercase tracking-wider text-[10px] text-primary">Step 1: Front Side</h4>
-                <p>1. Download the **Fronts (Odds)** PDF for your active batch.</p>
-                <p>2. Send to printer. Make sure printer settings are: **1-sided, Landscape, Actual Size (no scaling)**.</p>
-                <p>3. Let all pages print out. They will print on one side of each sheet.</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-[11px] text-muted-foreground leading-relaxed">
+              <div className="space-y-1">
+                <span className="font-bold text-primary uppercase text-[9px] tracking-wider block">Step 1: Front Side</span>
+                <p>Download &amp; print **Fronts**. Settings: **1-sided, Landscape, Actual Size (no scaling)**.</p>
               </div>
-              <div className="space-y-2">
-                <h4 className="font-bold uppercase tracking-wider text-[10px] text-accent">Step 2: Back Side</h4>
-                <p>1. Take the printed stack out of the output tray without shuffling or rearranging them.</p>
-                <p>2. Flip the stack over so you print on the blank side. **Orientation rule**: typically, flip along the short edge (bottom to top) and re-insert into the input tray.</p>
-                <p>3. Download the **Backs (Evens)** PDF and print it. The backs will print in register with the fronts!</p>
+              <div className="space-y-1">
+                <span className="font-bold text-accent uppercase text-[9px] tracking-wider block">Step 2: Back Side</span>
+                <p>Take printed stack without rearranging, flip along **short edge**, re-insert, and print **Backs**.</p>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Reprint Recovery Column */}
-        <div className="space-y-6">
-          <div className="glass p-6 rounded-2xl border-border space-y-4">
-            <div className="flex items-center gap-2 border-b border-border pb-4">
-              <AlertTriangle className="h-5 w-5 text-destructive" aria-hidden="true" />
-              <h3 className="text-lg font-bold text-foreground m-0">Ruined Print Recovery</h3>
+        {/* Right Preview & Recovery Column */}
+        <div className="lg:col-span-5 space-y-4">
+
+          {/* Visual Sheet Preview Card */}
+          <div className="glass p-4 rounded-xl border-border space-y-3">
+            <div className="flex items-center justify-between border-b border-border/50 pb-2">
+              <div className="flex items-center gap-2">
+                <Eye className="h-4 w-4 text-accent" />
+                <h3 className="text-sm font-bold text-foreground">Sheet {selectedSheet} Preview</h3>
+              </div>
+              <div className="flex bg-muted p-0.5 rounded border border-border text-[9px] font-bold">
+                <button
+                  onClick={() => setPreviewSide("front")}
+                  className={`text-[10px] font-bold px-2 py-1 rounded-md transition-all ${previewSide === "front"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                    }`}
+                >
+                  Front (Odds)
+                </button>
+                <button
+                  onClick={() => setPreviewSide("back")}
+                  className={`text-[10px] font-bold px-2 py-1 rounded-md transition-all ${previewSide === "back"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                    }`}
+                >
+                  Back (Evens)
+                </button>
+              </div>
             </div>
-            <p className="text-muted-foreground text-xs leading-relaxed">
-              Did the printer double-feed, jam, or skip a page? Don't panic and don't throw away the successful sheets!
-            </p>
-            <p className="text-muted-foreground text-xs leading-relaxed">
-              Enter the booklet page numbers that were ruined below. We will automatically calculate which physical sheets contain those pages and download just the required fronts and backs.
+
+            {/* Simulated Sheet - LOOKS LIKE PAPER: no corner radius, drop shadow */}
+            <div className="relative aspect-[1.5/1] w-full bg-white border border-neutral-300 shadow-[0_6px_16px_rgba(0,0,0,0.12)] flex flex-col p-4 overflow-hidden">
+              <div className="flex-1 w-full flex items-center justify-center overflow-hidden">
+                <PDFPageRenderer
+                  url={api.getDownloadUrl(bookletId)}
+                  pageNumber={(selectedSheet - 1) * 2 + (previewSide === "front" ? 1 : 2)}
+                  className="w-full h-full"
+                  rotation={0}
+                />
+              </div>
+
+
+            </div>
+            <div className="mt-3 flex items-center justify-between text-[10px] text-muted-foreground border-t border-border/30 pt-2 z-10">
+              <span>Physical Sheet {selectedSheet} of {totalSheets}</span>
+              <span className="font-semibold text-primary">
+                {previewSide === "front" ? "Odds (Front Layout)" : "Evens (Back Layout)"}
+              </span>
+            </div>
+          </div>
+
+          {/* Recovery Card */}
+          <div className="glass p-4 rounded-xl border-border space-y-3">
+            <div className="flex items-center gap-2 border-b border-border/40 pb-1.5">
+              <AlertTriangle className="h-4 w-4 text-destructive" />
+              <h3 className="text-xs font-bold text-foreground">Ruined Sheet Reprint Recovery</h3>
+            </div>
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              If a sheet was ruined, enter the ruined booklet page numbers. We'll download only those fronts or backs.
             </p>
 
-            <div className="space-y-3 pt-2">
-              <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
-                  <Label htmlFor="ruined-start-input" className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Start Page #</Label>
-                  <Input 
+                  <label htmlFor="ruined-start-input" className="text-[9px] uppercase font-bold text-muted-foreground tracking-wider">Start Page #</label>
+                  <input
                     id="ruined-start-input"
-                    type="number" 
-                    min="1" 
+                    type="number"
+                    min="1"
                     max={targetPages}
                     placeholder="e.g. 13"
                     value={ruinedStart}
                     onChange={(e) => setRuinedStart(e.target.value)}
+                    className="w-full bg-background border border-border rounded px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label htmlFor="ruined-end-input" className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">End Page # (Opt)</Label>
-                  <Input 
+                  <label htmlFor="ruined-end-input" className="text-[9px] uppercase font-bold text-muted-foreground tracking-wider">End Page # (Opt)</label>
+                  <input
                     id="ruined-end-input"
-                    type="number" 
-                    min="1" 
+                    type="number"
+                    min="1"
                     max={targetPages}
                     placeholder="e.g. 16"
                     value={ruinedEnd}
                     onChange={(e) => setRuinedEnd(e.target.value)}
+                    className="w-full bg-background border border-border rounded px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   />
                 </div>
               </div>
 
               {recoveryError && (
-                <p className="text-destructive text-[11px] font-medium animate-pulse">{recoveryError}</p>
+                <p className="text-destructive text-[10px] font-medium">{recoveryError}</p>
               )}
 
-              <div className="flex flex-col gap-2 pt-2">
-                <Button 
-                  variant="destructive" 
-                  className="w-full flex items-center justify-center gap-2"
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <Button
+                  variant="destructive"
+                  className="text-[11px] h-8"
                   onClick={() => handleDownloadRecovery("fronts")}
                 >
-                  <RotateCw className="h-4 w-4" aria-hidden="true" />
-                  Reprint Ruined Fronts
+                  <RotateCw className="h-3 w-3 mr-1" />
+                  Reprint Fronts
                 </Button>
-                <Button 
-                  variant="destructive" 
-                  className="w-full flex items-center justify-center gap-2"
+                <Button
+                  variant="destructive"
+                  className="text-[11px] h-8"
                   onClick={() => handleDownloadRecovery("backs")}
                 >
-                  <RotateCw className="h-4 w-4" aria-hidden="true" />
-                  Reprint Ruined Backs
+                  <RotateCw className="h-3 w-3 mr-1" />
+                  Reprint Backs
                 </Button>
-                <Button 
-                  variant="outline" 
-                  className="w-full text-foreground border-border hover:bg-muted/70"
+                <Button
+                  variant="outline"
+                  className="col-span-2 text-[11px] h-8 text-foreground border-border hover:bg-muted/70"
                   onClick={() => handleDownloadRecovery("both")}
                 >
-                  <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                  <RefreshCw className="h-3 w-3 mr-1" />
                   Reprint Both (Full Sheets)
                 </Button>
               </div>
-            </div>
-          </div>
-
-          {/* Visual Flipper Hint */}
-          <div className="glass p-6 rounded-2xl border-border space-y-3">
-            <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider m-0">Printer Feed Tips</h4>
-            <div className="space-y-3 text-xs text-muted-foreground leading-relaxed">
-              <Card className="p-3 bg-background/60 rounded-lg border border-border">
-                <span className="font-bold text-foreground block mb-1">Testing Flip Direction:</span>
-                Draw a small arrow pointing **UP** on the top page of the tray. Print a single test sheet. See where the arrow ends up. This tells you if your printer feeds head-first, face-up, or face-down!
-              </Card>
-              <Card className="p-3 bg-background/60 rounded-lg border border-border">
-                <span className="font-bold text-foreground block mb-1">Page Orientation:</span>
-                For landscape booklets, printing pages double-sided requires flipping along the **short edge** to prevent the back page from printing upside down!
-              </Card>
             </div>
           </div>
         </div>
