@@ -97,6 +97,10 @@ services:
       - OLLAMA_HOST=http://ollama:11434
       - FRONTEND_URL=http://localhost
       - ALLOWED_ORIGINS=http://localhost,http://localhost:5173,http://127.0.0.1,http://127.0.0.1:5173
+      - MAX_PARALLEL_DOCUMENTS=5
+      - SPLIT_CHUNK_SIZE=100
+      - PAGE_PARSING_TIMEOUT_SECONDS=5
+      - GODEBUG=madvdontneed=1
     depends_on:
       db:
         condition: service_healthy
