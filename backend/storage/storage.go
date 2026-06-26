@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"time"
 
+	"booklet/logger"
+
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
@@ -105,7 +107,7 @@ func UploadFile(ctx context.Context, objectName string, filePath string, content
 	if err != nil {
 		return fmt.Errorf("failed to upload file %s: %w", filePath, err)
 	}
-	log.Printf("Uploaded %s to MinIO as %s", filePath, objectName)
+	logger.Logf(ctx, "Uploaded %s to MinIO as %s", filePath, objectName)
 	return nil
 }
 
@@ -117,7 +119,7 @@ func UploadStream(ctx context.Context, objectName string, reader io.Reader, size
 	if err != nil {
 		return fmt.Errorf("failed to upload stream to %s: %w", objectName, err)
 	}
-	log.Printf("Uploaded stream to MinIO as %s (size: %d bytes)", objectName, size)
+	logger.Logf(ctx, "Uploaded stream to MinIO as %s (size: %d bytes)", objectName, size)
 	return nil
 }
 
@@ -127,7 +129,7 @@ func DownloadFile(ctx context.Context, objectName string, destPath string) error
 	if err != nil {
 		return fmt.Errorf("failed to download %s to %s: %w", objectName, destPath, err)
 	}
-	log.Printf("Downloaded %s from MinIO to %s", objectName, destPath)
+	logger.Logf(ctx, "Downloaded %s from MinIO to %s", objectName, destPath)
 	return nil
 }
 
@@ -150,6 +152,6 @@ func DeleteFile(ctx context.Context, objectName string) error {
 	if err != nil {
 		return fmt.Errorf("failed to delete %s from MinIO: %w", objectName, err)
 	}
-	log.Printf("Deleted %s from MinIO", objectName)
+	logger.Logf(ctx, "Deleted %s from MinIO", objectName)
 	return nil
 }
