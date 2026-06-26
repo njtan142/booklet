@@ -217,6 +217,7 @@ export const Dashboard: React.FC = () => {
           setCompiling(false)
           setPollingBookletId(null)
           setActiveBookletId(pollingBookletId)
+          setCompileStatus("")
         } else if (booklet.status === "failed") {
           clearInterval(interval)
           setCompiling(false)
@@ -240,7 +241,10 @@ export const Dashboard: React.FC = () => {
       <PrintHelper 
         bookletId={activeBookletId} 
         totalPages={docDetail.total_pages}
-        onBack={() => setActiveBookletId(null)}
+        onBack={() => {
+          setActiveBookletId(null)
+          setCompileStatus("")
+        }}
       />
     )
   }

@@ -422,6 +422,33 @@ func HandleCompileBooklet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check for a cached/in-progress booklet compilation
+	var cachedID string
+	var cachedStatus string
+	err = db.DB.QueryRow(`
+		SELECT id, status FROM compiled_booklets
+		WHERE document_id = $1 
+		  AND (status = 'ready' OR status = 'compiling')
+		  AND config_margin = $2 
+		  AND config_gutter = $3 
+		  AND config_paper_size = $4 
+		  AND config_signature_size = $5
+		ORDER BY created_at DESC LIMIT 1`,
+		docID, req.Margin, req.Gutter, req.PaperSize, req.SignatureSize).Scan(&cachedID, &cachedStatus)
+
+	if err == nil {
+		log.Printf("Found cached booklet compilation %s (status: %s) for document %s", cachedID, cachedStatus, docID)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		json.NewEncoder(w).Encode(map[string]string{
+			"message":    "Booklet retrieved from cache.",
+			"booklet_id": cachedID,
+		})
+		return
+	} else if err != sql.ErrNoRows {
+		log.Printf("Warning: failed to query cached booklets: %v", err)
+	}
+
 	bookletID := uuid.New()
 	_, err = db.DB.Exec(`
 		INSERT INTO compiled_booklets (id, document_id, status, config_margin, config_gutter, config_paper_size, config_signature_size, created_at)

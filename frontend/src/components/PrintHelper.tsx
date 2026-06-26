@@ -93,22 +93,25 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, totalPages,
       </div>
 
       {/* Overview stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="glass p-4 rounded-xl border-border">
-          <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wider">Original Pages</p>
-          <p className="text-2xl font-extrabold text-foreground mt-1">{totalPages}</p>
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 glass px-4 py-2.5 rounded-xl border border-border text-sm">
+        <div className="flex items-center gap-2">
+          <span className="text-muted-foreground text-xs font-semibold uppercase tracking-wider">Original Pages</span>
+          <span className="font-extrabold text-foreground">{totalPages}</span>
         </div>
-        <div className="glass p-4 rounded-xl border-border">
-          <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wider">Padded Booklet Pages</p>
-          <p className="text-2xl font-extrabold text-primary mt-1">{targetPages}</p>
+        <div className="hidden sm:block h-4 w-px bg-border" />
+        <div className="flex items-center gap-2">
+          <span className="text-muted-foreground text-xs font-semibold uppercase tracking-wider">Padded Booklet Pages</span>
+          <span className="font-extrabold text-primary">{targetPages}</span>
         </div>
-        <div className="glass p-4 rounded-xl border-border">
-          <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wider">Total Sheets of Paper</p>
-          <p className="text-2xl font-extrabold text-accent mt-1">{totalSheets}</p>
+        <div className="hidden sm:block h-4 w-px bg-border" />
+        <div className="flex items-center gap-2">
+          <span className="text-muted-foreground text-xs font-semibold uppercase tracking-wider">Total Sheets</span>
+          <span className="font-extrabold text-accent">{totalSheets}</span>
         </div>
-        <div className="glass p-4 rounded-xl border-border">
-          <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wider">Estimated Signatures</p>
-          <p className="text-2xl font-extrabold text-foreground mt-1">{Math.ceil(totalSheets / 4)}</p>
+        <div className="hidden sm:block h-4 w-px bg-border" />
+        <div className="flex items-center gap-2">
+          <span className="text-muted-foreground text-xs font-semibold uppercase tracking-wider">Estimated Signatures</span>
+          <span className="font-extrabold text-foreground">{Math.ceil(totalSheets / 4)}</span>
         </div>
       </div>
 
