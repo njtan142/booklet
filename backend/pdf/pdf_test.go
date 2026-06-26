@@ -1,11 +1,16 @@
 package pdf
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	dpdf "github.com/dslipak/pdf"
 )
 
 func TestCalculateBookletLayout_S4_N4(t *testing.T) {
@@ -135,4 +140,127 @@ func writeMinimalTestPDF(path string) error {
 
 	return os.WriteFile(path, []byte(builder.String()), 0644)
 }
+
+func TestSplitDocument(t *testing.T) {
+	tempDir := t.TempDir()
+	inputPath := filepath.Join(tempDir, "input.pdf")
+
+	if err := writeMinimalTestPDF(inputPath); err != nil {
+		t.Fatalf("failed to write test PDF: %v", err)
+	}
+
+	var progressCalled bool
+	var steps []string
+	var pages []PageInfo
+	err := SplitDocument(context.Background(), "test-doc-id", inputPath, func(current, total int, step string) {
+		progressCalled = true
+		steps = append(steps, step)
+	}, func(page PageInfo) error {
+		pages = append(pages, page)
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("SplitDocument returned error: %v", err)
+	}
+
+	if len(pages) != 1 {
+		t.Fatalf("Expected 1 page, got %d", len(pages))
+	}
+
+	if !progressCalled {
+		t.Errorf("Expected progress callback to be called")
+	}
+
+	t.Logf("Steps called: %v", steps)
+}
+
+func TestHangingPage(t *testing.T) {
+	path := "../../page3.pdf"
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		t.Skip("page3.pdf not found, skipping")
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("failed to open page3: %v", err)
+	}
+	defer file.Close()
+
+	fi, err := file.Stat()
+	if err != nil {
+		t.Fatalf("failed to stat page3: %v", err)
+	}
+
+	r, err := dpdf.NewReader(file, fi.Size())
+	if err != nil {
+		t.Fatalf("failed to create reader: %v", err)
+	}
+
+	p := r.Page(1)
+	
+	// Test p.Content() first
+	t.Log("Testing p.Content().Text...")
+	contentDone := make(chan bool, 1)
+	go func() {
+		content := p.Content()
+		t.Logf("Found %d text elements", len(content.Text))
+		contentDone <- true
+	}()
+
+	select {
+	case <-contentDone:
+		t.Log("p.Content().Text finished successfully!")
+	case <-time.After(3 * time.Second):
+		t.Error("p.Content().Text HUNG!")
+	}
+
+	// Test GetPlainText()
+	t.Log("Testing GetPlainText()...")
+	plainTextDone := make(chan bool, 1)
+	go func() {
+		plainTextReader, err := r.GetPlainText()
+		if err == nil {
+			var buf strings.Builder
+			io.Copy(&buf, plainTextReader)
+		}
+		plainTextDone <- true
+	}()
+
+	select {
+	case <-plainTextDone:
+		t.Log("GetPlainText() finished successfully!")
+	case <-time.After(3 * time.Second):
+		t.Log("GetPlainText() HUNG! (as expected for this page)")
+	}
+}
+
+func TestSplitDocument_ChunkSize(t *testing.T) {
+	tempDir := t.TempDir()
+	inputPath := filepath.Join(tempDir, "input.pdf")
+	if err := writeMinimalTestPDF(inputPath); err != nil {
+		t.Fatalf("failed to write test PDF: %v", err)
+	}
+
+	t.Run("Valid SPLIT_CHUNK_SIZE", func(t *testing.T) {
+		t.Setenv("SPLIT_CHUNK_SIZE", "2")
+		err := SplitDocument(context.Background(), "test-chunk-1", inputPath, nil, func(page PageInfo) error {
+			return nil
+		})
+		if err != nil {
+			t.Errorf("expected no error, got %v", err)
+		}
+	})
+
+	t.Run("Invalid SPLIT_CHUNK_SIZE fallback", func(t *testing.T) {
+		t.Setenv("SPLIT_CHUNK_SIZE", "invalid")
+		err := SplitDocument(context.Background(), "test-chunk-2", inputPath, nil, func(page PageInfo) error {
+			return nil
+		})
+		if err != nil {
+			t.Errorf("expected no error with fallback, got %v", err)
+		}
+	})
+}
+
 

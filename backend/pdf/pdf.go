@@ -3,7 +3,6 @@ package pdf
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"math"
 	"os"
@@ -11,7 +10,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
+	"booklet/logger"
 	"booklet/storage"
 
 	"github.com/dslipak/pdf"
@@ -37,32 +40,70 @@ type BookletConfig struct {
 	Guides        bool    // Draw folding/cutting guides
 }
 
-// SplitDocument splits the uploaded PDF into single-page PDFs, extracts text and page dimensions
-func SplitDocument(ctx context.Context, docID string, localPath string) ([]PageInfo, error) {
+// GetPageCount returns the total page count of a PDF file
+func GetPageCount(localPath string) (int, error) {
+	return api.PageCountFile(localPath)
+}
+
+// SplitDocument splits the uploaded PDF into single-page PDFs, extracts text and page dimensions, and processes them incrementally
+func SplitDocument(ctx context.Context, docID string, localPath string, onProgress func(current, total int, step string), onPage func(page PageInfo) error) error {
 	// Create a temp directory for splits inside the parent directory of localPath
 	// so that it gets cleaned up when the caller cleans up the parent directory.
 	tempDir := filepath.Join(filepath.Dir(localPath), "split")
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create temp dir: %w", err)
+		return fmt.Errorf("failed to create temp dir: %w", err)
 	}
 
-	log.Printf("Splitting document %s in %s...", localPath, tempDir)
+	logger.Logf(ctx, "Splitting document %s in %s...", localPath, tempDir)
 
-	// pdfcpu Split splits the file into parts of size 1 page.
+	// 1. Get the total number of pages in the PDF file
+	numPages, err := api.PageCountFile(localPath)
+	if err != nil {
+		return fmt.Errorf("failed to get page count: %w", err)
+	}
+
+	if onProgress != nil {
+		onProgress(0, numPages, "splitting PDF")
+	}
+
 	// We disable object streams and xref streams to ensure compatibility with gofpdi.
 	conf := model.NewDefaultConfiguration()
+	conf.ValidationMode = model.ValidationRelaxed
 	conf.WriteObjectStream = false
 	conf.WriteXRefStream = false
 
-	err := api.SplitFile(localPath, tempDir, 1, conf)
-	if err != nil {
-		return nil, fmt.Errorf("pdfcpu split failed: %w", err)
+	chunkSize := 100
+	if envVal := os.Getenv("SPLIT_CHUNK_SIZE"); envVal != "" {
+		if val, err := strconv.Atoi(envVal); err == nil && val > 0 {
+			chunkSize = val
+		}
+	}
+	for startPage := 1; startPage <= numPages; startPage += chunkSize {
+		endPage := startPage + chunkSize - 1
+		if endPage > numPages {
+			endPage = numPages
+		}
+
+		var pagesToExtract []string
+		for p := startPage; p <= endPage; p++ {
+			pagesToExtract = append(pagesToExtract, strconv.Itoa(p))
+		}
+
+		logger.Logf(ctx, "[SplitDocument] Splitting page range %d-%d of %d...", startPage, endPage, numPages)
+		err = api.ExtractPagesFile(localPath, tempDir, pagesToExtract, conf)
+		if err != nil {
+			return fmt.Errorf("pdfcpu page extraction failed for range %d-%d: %w", startPage, endPage, err)
+		}
+
+		if onProgress != nil {
+			onProgress(endPage, numPages, "splitting PDF")
+		}
 	}
 
 	// Read files from temp directory
 	files, err := os.ReadDir(tempDir)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read split dir: %w", err)
+		return fmt.Errorf("failed to read split dir: %w", err)
 	}
 
 	// We sort the files by page number to process in order.
@@ -87,7 +128,7 @@ func SplitDocument(ctx context.Context, docID string, localPath string) ([]PageI
 		numStr := parts[len(parts)-1]
 		pageNum, err := strconv.Atoi(numStr)
 		if err != nil {
-			log.Printf("Warning: failed to parse page number from filename %s: %v", f.Name(), err)
+			logger.Logf(ctx, "Warning: failed to parse page number from filename %s: %v", f.Name(), err)
 			continue
 		}
 
@@ -106,94 +147,202 @@ func SplitDocument(ctx context.Context, docID string, localPath string) ([]PageI
 		}
 	}
 
-	var pages []PageInfo
-	for _, sf := range splitFiles {
-		// Extract page dimensions and text content
-		text, width, height, err := processSinglePage(sf.path)
-		if err != nil {
-			log.Printf("Warning: failed to process page %d: %v. Using defaults.", sf.pageNum, err)
-			// fallback default A4 portrait dimensions
-			width = 595.28
-			height = 841.89
-			text = ""
+	numWorkers := 4 // parse up to 4 pages in parallel
+	if envVal := os.Getenv("PARALLEL_PAGE_PARSERS"); envVal != "" {
+		if val, err := strconv.Atoi(envVal); err == nil && val > 0 {
+			numWorkers = val
 		}
-
-		pages = append(pages, PageInfo{
-			PageNumber: sf.pageNum,
-			Text:       text,
-			Width:      width,
-			Height:     height,
-			LocalPath:  sf.path,
-		})
 	}
 
-	return pages, nil
+	type task struct {
+		idx int
+		sf  splitFile
+	}
+	taskChan := make(chan task, len(splitFiles))
+	for idx, sf := range splitFiles {
+		taskChan <- task{idx: idx, sf: sf}
+	}
+	close(taskChan)
+
+	var wg sync.WaitGroup
+	var errOnce sync.Once
+	var firstErr error
+
+	// We use atomic counter for progress tracking in onProgress
+	var parsedCount int32
+
+	for w := 0; w < numWorkers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for t := range taskChan {
+				// If another worker failed, abort early
+				if firstErr != nil {
+					return
+				}
+
+				// Extract page dimensions and text content
+				text, width, height, err := processSinglePage(t.sf.path)
+				if err != nil {
+					logger.Logf(ctx, "Warning: failed to process page %d: %v. Using defaults.", t.sf.pageNum, err)
+					// fallback default A4 portrait dimensions
+					width = 595.28
+					height = 841.89
+					text = ""
+				}
+
+				page := PageInfo{
+					PageNumber: t.sf.pageNum,
+					Text:       text,
+					Width:      width,
+					Height:     height,
+					LocalPath:  t.sf.path,
+				}
+
+				if onProgress != nil {
+					completed := atomic.AddInt32(&parsedCount, 1)
+					onProgress(int(completed), len(splitFiles), "parsing page text")
+				}
+
+				if err := onPage(page); err != nil {
+					errOnce.Do(func() {
+						firstErr = err
+					})
+					return
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	if firstErr != nil {
+		return firstErr
+	}
+
+	return nil
 }
 
 func processSinglePage(filePath string) (text string, width float64, height float64, err error) {
+	type result struct {
+		text   string
+		width  float64
+		height float64
+		err    error
+	}
+
+	resChan := make(chan result, 1)
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				resChan <- result{
+					err: fmt.Errorf("panic while processing page %s: %v", filePath, r),
+				}
+			}
+		}()
+		txt, w, h, e := processSinglePageInner(filePath)
+		resChan <- result{text: txt, width: w, height: h, err: e}
+	}()
+
+	timeout := 5 * time.Second
+	if envVal := os.Getenv("PAGE_PARSING_TIMEOUT_SECONDS"); envVal != "" {
+		if val, err := strconv.Atoi(envVal); err == nil && val > 0 {
+			timeout = time.Duration(val) * time.Second
+		}
+	}
+
+	select {
+	case res := <-resChan:
+		return res.text, res.width, res.height, res.err
+	case <-time.After(timeout):
+		log.Printf("[processSinglePage] WARNING: Timeout (%v) processing page %s. Skipping and treating as empty.", timeout, filePath)
+		return "", 595.28, 841.89, fmt.Errorf("timeout processing page %s", filePath)
+	}
+}
+
+func processSinglePageInner(filePath string) (text string, width float64, height float64, err error) {
+	log.Printf("[processSinglePageInner] Starting processing for: %s", filePath)
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("panic while processing page %s: %v", filePath, r)
+			log.Printf("[processSinglePage] Recovered from panic on %s: %v", filePath, r)
 		}
 	}()
 
 	// 1. Open PDF to extract dimensions
-	// We can use dslipak/pdf reader
 	file, err := os.Open(filePath)
 	if err != nil {
+		log.Printf("[processSinglePage] Failed to open file %s: %v", filePath, err)
 		return "", 0, 0, err
 	}
 	defer file.Close()
 
 	fileInfo, err := file.Stat()
 	if err != nil {
+		log.Printf("[processSinglePage] Failed to stat file %s: %v", filePath, err)
 		return "", 0, 0, err
 	}
 
+	log.Printf("[processSinglePage] Creating new dslipak/pdf reader for %s", filePath)
 	r, err := pdf.NewReader(file, fileInfo.Size())
 	if err != nil {
+		log.Printf("[processSinglePage] Failed to create reader for %s: %v", filePath, err)
 		return "", 0, 0, err
 	}
+	log.Printf("[processSinglePage] Reader created successfully for %s. NumPages: %d", filePath, r.NumPage())
 
 	if r.NumPage() < 1 {
+		log.Printf("[processSinglePage] Empty PDF page for %s", filePath)
 		return "", 0, 0, fmt.Errorf("empty PDF page")
 	}
 
+	log.Printf("[processSinglePage] Getting page 1 for %s", filePath)
 	p := r.Page(1)
 	if p.V.IsNull() {
+		log.Printf("[processSinglePage] Invalid page object for %s", filePath)
 		return "", 0, 0, fmt.Errorf("invalid page object")
 	}
 
-	dims, err := api.PageDimsFile(filePath)
-	if err == nil && len(dims) > 0 {
-		width = dims[0].Width
-		height = dims[0].Height
-	} else {
-		// Fallback to standard A4
+	contentsVal := p.V.Key("Contents")
+
+
+	// Extract page dimensions directly from page object MediaBox or CropBox in memory
+	box := p.V.Key("CropBox")
+	if box.IsNull() {
+		box = p.V.Key("MediaBox")
+	}
+	if !box.IsNull() && box.Len() >= 4 {
+		llx := box.Index(0).Float64()
+		lly := box.Index(1).Float64()
+		urx := box.Index(2).Float64()
+		ury := box.Index(3).Float64()
+		width = urx - llx
+		height = ury - lly
+	}
+
+	// Fallback to standard A4 if dimensions are invalid or zero
+	if width <= 0 || height <= 0 {
 		width = 595.28
 		height = 841.89
 	}
+	log.Printf("[processSinglePage] Dimensions extracted: %.2f x %.2f for %s", width, height, filePath)
 
 	// 2. Extract plain text
-	var textBuf strings.Builder
-	plainTextReader, err := r.GetPlainText()
-	if err == nil {
-		if _, err := io.Copy(&textBuf, plainTextReader); err == nil {
-			text = textBuf.String()
-		}
-	}
-	if text == "" {
-		// Fallback to manual concatenation if GetPlainText fails or is empty
+	if !contentsVal.IsNull() {
 		var manualBuf strings.Builder
-		texts := p.Content().Text
-		for _, txt := range texts {
+		content := p.Content()
+		for _, txt := range content.Text {
 			manualBuf.WriteString(txt.S)
 			manualBuf.WriteString(" ")
 		}
-		text = manualBuf.String()
+		text = strings.TrimSpace(manualBuf.String())
+		log.Printf("[processSinglePage] Text extracted successfully, length: %d for %s", len(text), filePath)
+	} else {
+		log.Printf("[processSinglePage] Contents key is null, skipping text extraction for %s", filePath)
 	}
 
-	return strings.TrimSpace(text), width, height, nil
+	log.Printf("[processSinglePage] Finished processing for: %s", filePath)
+	return text, width, height, nil
 }
 
 type DBPageInfo struct {
@@ -256,7 +405,7 @@ func CompileBooklet(ctx context.Context, dbPages []DBPageInfo, config BookletCon
 	}
 	defer os.RemoveAll(tempDir)
 
-	log.Printf("Compiling booklet using gopdf for %d pages (Signature size: %d, Margin: %.2f, Gutter: %.2f)...", len(dbPages), config.SignatureSize, config.Margin, config.Gutter)
+	logger.Logf(ctx, "Compiling booklet using gopdf for %d pages (Signature size: %d, Margin: %.2f, Gutter: %.2f)...", len(dbPages), config.SignatureSize, config.Margin, config.Gutter)
 
 	// Sort database pages sequentially by page number
 	sort.Slice(dbPages, func(i, j int) bool {
@@ -395,7 +544,7 @@ func CompileBooklet(ctx context.Context, dbPages []DBPageInfo, config BookletCon
 
 // CompileBookletSlice compiles only specific physical sheets and/or sides (fronts/backs) of a booklet directly from single pages
 func CompileBookletSlice(ctx context.Context, dbPages []DBPageInfo, config BookletConfig, filterType string, sheetRange string) (string, error) {
-	log.Printf("[CompileBookletSlice] Compiling slice for signatureSize=%d, filterType=%s, sheetRange=%s", config.SignatureSize, filterType, sheetRange)
+	logger.Logf(ctx, "[CompileBookletSlice] Compiling slice for signatureSize=%d, filterType=%s, sheetRange=%s", config.SignatureSize, filterType, sheetRange)
 	
 	// Create a temp directory for downloaded single pages
 	tempDir, err := os.MkdirTemp("", "booklet-compile-slice-*")
