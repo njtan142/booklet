@@ -47,7 +47,7 @@ func GetSMTPConfig(ctx context.Context) (SMTPConfig, error) {
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			// Fallback to env variables
+			logger.Logf(ctx, "SMTP: No configuration found in database. Falling back to environment variables.")
 			return GetSMTPConfigFromEnv(), nil
 		}
 		return cfg, err
@@ -225,11 +225,13 @@ func SendEmail(ctx context.Context, config SMTPConfig, to string, subject string
 		}
 		conn, err := tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
 		if err != nil {
+			logger.Logf(ctx, "SMTP: Connection failed via SSL/TLS to %s: %v", addr, err)
 			return fmt.Errorf("failed to connect via SSL/TLS: %w", err)
 		}
 		c, err := smtp.NewClient(conn, config.Host)
 		if err != nil {
 			conn.Close()
+			logger.Logf(ctx, "SMTP: Failed to create client after SSL/TLS connect: %v", err)
 			return fmt.Errorf("failed to create SMTP client: %w", err)
 		}
 		client = c
@@ -237,11 +239,13 @@ func SendEmail(ctx context.Context, config SMTPConfig, to string, subject string
 		// Explicit TLS connection
 		conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 		if err != nil {
+			logger.Logf(ctx, "SMTP: Connection failed to %s: %v", addr, err)
 			return fmt.Errorf("failed to connect: %w", err)
 		}
 		c, err := smtp.NewClient(conn, config.Host)
 		if err != nil {
 			conn.Close()
+			logger.Logf(ctx, "SMTP: Failed to create client after connect: %v", err)
 			return fmt.Errorf("failed to create SMTP client: %w", err)
 		}
 		client = c
@@ -249,16 +253,19 @@ func SendEmail(ctx context.Context, config SMTPConfig, to string, subject string
 		// Call StartTLS
 		if err := client.StartTLS(tlsConfig); err != nil {
 			client.Close()
+			logger.Logf(ctx, "SMTP: STARTTLS handshake failed: %v", err)
 			return fmt.Errorf("STARTTLS failed: %w", err)
 		}
 	default: // "none" or unencrypted
 		conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 		if err != nil {
+			logger.Logf(ctx, "SMTP: Connection failed to %s: %v", addr, err)
 			return fmt.Errorf("failed to connect: %w", err)
 		}
 		c, err := smtp.NewClient(conn, config.Host)
 		if err != nil {
 			conn.Close()
+			logger.Logf(ctx, "SMTP: Failed to create client: %v", err)
 			return fmt.Errorf("failed to create SMTP client: %w", err)
 		}
 		client = c
@@ -273,27 +280,34 @@ func SendEmail(ctx context.Context, config SMTPConfig, to string, subject string
 		} else {
 			auth = smtp.PlainAuth("", config.Username, config.Password, config.Host)
 		}
+		logger.Logf(ctx, "SMTP: Authenticating user %s...", config.Username)
 		if err := client.Auth(auth); err != nil {
+			logger.Logf(ctx, "SMTP: Authentication failed: %v", err)
 			return fmt.Errorf("SMTP auth failed for user %s: %w", config.Username, err)
 		}
+		logger.Logf(ctx, "SMTP: Authentication successful")
 	}
 
 	// Send commands
 	if err := client.Mail(config.FromEmail); err != nil {
+		logger.Logf(ctx, "SMTP: MAIL command failed: %v", err)
 		return fmt.Errorf("MAIL command failed: %w", err)
 	}
 	if err := client.Rcpt(to); err != nil {
+		logger.Logf(ctx, "SMTP: RCPT command failed: %v", err)
 		return fmt.Errorf("RCPT command failed for %s: %w", to, err)
 	}
 
 	// Send body
 	w, err := client.Data()
 	if err != nil {
+		logger.Logf(ctx, "SMTP: DATA command failed: %v", err)
 		return fmt.Errorf("DATA command failed: %w", err)
 	}
 	defer w.Close()
 
 	if _, err := w.Write(msg.Bytes()); err != nil {
+		logger.Logf(ctx, "SMTP: Failed to write message data: %v", err)
 		return fmt.Errorf("failed to write message body: %w", err)
 	}
 
