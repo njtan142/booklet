@@ -26,10 +26,8 @@ func main() {
 		log.Fatalf("Fatal: Database initialization failed: %v", err)
 	}
 
-	// 1b. Clean up any stale background processes from a previous crash/shutdown
-	if err := db.FailStaleProcessingDocuments(); err != nil {
-		log.Printf("Warning: Failed to clean up stale processes: %v", err)
-	}
+	// TODO: Expose db.FailStaleProcessingDocuments() as a secured admin API route (e.g., POST /api/admin/clean-stale-processes)
+	// to be triggered by an external cron/scheduler. The endpoint should require API key authentication (with admin key rotation).
 
 	// 2. Initialize MinIO Object Storage
 	if err := storage.InitStorage(); err != nil {
@@ -49,35 +47,42 @@ func main() {
 	mux := http.NewServeMux()
 
 	// Auth routes (unprotected)
-	mux.HandleFunc("/api/auth/login", auth.HandleLogin)
-	mux.HandleFunc("/api/auth/callback", auth.HandleCallback)
-	mux.HandleFunc("/api/auth/logout", auth.HandleLogout)
-	mux.HandleFunc("/api/auth/me", auth.HandleMe)
+	mux.Handle("/api/auth/login", handlers.InstrumentHandler("/api/auth/login", auth.HandleLogin))
+	mux.Handle("/api/auth/callback", handlers.InstrumentHandler("/api/auth/callback", auth.HandleCallback))
+	mux.Handle("/api/auth/logout", handlers.InstrumentHandler("/api/auth/logout", auth.HandleLogout))
+	mux.Handle("/api/auth/me", handlers.InstrumentHandler("/api/auth/me", auth.HandleMe))
 
 	// Developer bypass route — only registered when APP_ENV=development.
 	// In production this path does not exist in the mux at all (returns 404).
 	if os.Getenv("APP_ENV") == "development" {
 		log.Println("[DEV] Developer bypass route registered at /api/auth/dev/login")
-		mux.HandleFunc("/api/auth/dev/login", auth.HandleDevLogin)
+		mux.Handle("/api/auth/dev/login", handlers.InstrumentHandler("/api/auth/dev/login", auth.HandleDevLogin))
 	}
 
 	// Document Management routes (require authentication middleware)
-	mux.Handle("/api/documents", auth.RequireAuth(http.HandlerFunc(handlers.HandleListDocuments)))
-	mux.Handle("/api/documents/{id}", auth.RequireAuth(http.HandlerFunc(handlers.HandleGetDocument)))
-	mux.Handle("/api/documents/{id}/dismiss", auth.RequireAuth(http.HandlerFunc(handlers.HandleDismissDocument)))
-	mux.Handle("/api/documents/upload", auth.RequireAuth(http.HandlerFunc(handlers.HandleUploadDocument)))
-	mux.Handle("/api/documents/{id}/pages/{page_number}/pdf", auth.RequireAuth(http.HandlerFunc(handlers.HandleGetPagePDF)))
+	mux.Handle("/api/documents", auth.RequireAuth(handlers.InstrumentHandler("/api/documents", handlers.HandleListDocuments)))
+	mux.Handle("/api/documents/{id}", auth.RequireAuth(handlers.InstrumentHandler("/api/documents/{id}", handlers.HandleGetDocument)))
+	mux.Handle("/api/documents/{id}/dismiss", auth.RequireAuth(handlers.InstrumentHandler("/api/documents/{id}/dismiss", handlers.HandleDismissDocument)))
+	mux.Handle("/api/documents/upload", auth.RequireAuth(handlers.InstrumentHandler("/api/documents/upload", handlers.HandleUploadDocument)))
+	mux.Handle("/api/documents/{id}/pages/{page_number}/pdf", auth.RequireAuth(handlers.InstrumentHandler("/api/documents/{id}/pages/{page_number}/pdf", handlers.HandleGetPagePDF)))
+
+	// New resume route (requires authentication middleware)
+	mux.Handle("/api/documents/{id}/resume", auth.RequireAuth(handlers.InstrumentHandler("/api/documents/{id}/resume", handlers.HandleResumeDocument)))
 
 	// Booklet Compilation routes (require authentication middleware)
-	mux.Handle("/api/documents/{id}/booklet/preview", auth.RequireAuth(http.HandlerFunc(handlers.HandleGetBookletPreviewPDF)))
-	mux.Handle("/api/documents/{id}/booklet/compile", auth.RequireAuth(http.HandlerFunc(handlers.HandleCompileBooklet)))
-	mux.Handle("/api/booklets", auth.RequireAuth(http.HandlerFunc(handlers.HandleListBooklets)))
-	mux.Handle("/api/booklets/{id}", auth.RequireAuth(http.HandlerFunc(handlers.HandleGetBooklet)))
-	mux.Handle("/api/booklets/{id}/download", auth.RequireAuth(http.HandlerFunc(handlers.HandleDownloadBooklet)))
+	mux.Handle("/api/documents/{id}/booklet/preview", auth.RequireAuth(handlers.InstrumentHandler("/api/documents/{id}/booklet/preview", handlers.HandleGetBookletPreviewPDF)))
+	mux.Handle("/api/documents/{id}/booklet/compile", auth.RequireAuth(handlers.InstrumentHandler("/api/documents/{id}/booklet/compile", handlers.HandleCompileBooklet)))
+	mux.Handle("/api/documents/{id}/booklet/cleanup", auth.RequireAuth(handlers.InstrumentHandler("/api/documents/{id}/booklet/cleanup", handlers.HandleCleanupBooklets)))
+	mux.Handle("/api/booklets", auth.RequireAuth(handlers.InstrumentHandler("/api/booklets", handlers.HandleListBooklets)))
+	mux.Handle("/api/booklets/{id}", auth.RequireAuth(handlers.InstrumentHandler("/api/booklets/{id}", handlers.HandleGetBooklet)))
+	mux.Handle("/api/booklets/{id}/download", auth.RequireAuth(handlers.InstrumentHandler("/api/booklets/{id}/download", handlers.HandleDownloadBooklet)))
 
 	// Semantic Search route (requires authentication middleware)
-	mux.Handle("/api/search", auth.RequireAuth(http.HandlerFunc(handlers.HandleSemanticSearch)))
-	mux.Handle("/api/documents/{id}/search-preview", auth.RequireAuth(http.HandlerFunc(handlers.HandleDocumentSearchPreviewPDF)))
+	mux.Handle("/api/search", auth.RequireAuth(handlers.InstrumentHandler("/api/search", handlers.HandleSemanticSearch)))
+	mux.Handle("/api/documents/{id}/search-preview", auth.RequireAuth(handlers.InstrumentHandler("/api/documents/{id}/search-preview", handlers.HandleDocumentSearchPreviewPDF)))
+
+	// Administrative routes (requires API key authentication, OIDC not required)
+	mux.Handle("/api/admin/clean-stale-processes", handlers.InstrumentHandler("/api/admin/clean-stale-processes", handlers.HandleCleanStaleProcesses))
 
 	// Prometheus Metrics endpoint
 	mux.Handle("/metrics", promhttp.Handler())

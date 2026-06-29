@@ -97,6 +97,7 @@ func runMigrations() error {
 	_, _ = DB.Exec(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS is_dismissed BOOLEAN DEFAULT FALSE;`)
 	_, _ = DB.Exec(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS split_pages INT DEFAULT 0;`)
 	_, _ = DB.Exec(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS parsed_pages INT DEFAULT 0;`)
+	_, _ = DB.Exec(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS original_storage_path TEXT;`)
 
 	// 3. Document Pages Table (using 384 dimensions for all-minilm embeddings by default)
 	log.Println("Creating document_pages table...")
@@ -158,7 +159,7 @@ func runMigrations() error {
 		ALTER TABLE compiled_booklets ADD COLUMN IF NOT EXISTS config_guides BOOLEAN NOT NULL DEFAULT FALSE;
 	`)
 	if err != nil {
-		log.Printf("Warning: failed to add config_guides column: %v", err)
+		return err
 	}
 
 	log.Println("Database migrations applied successfully.")
@@ -174,15 +175,19 @@ func Float32ArrayToString(slice []float32) string {
 	return "[" + strings.Join(strVals, ",") + "]"
 }
 
-// FailStaleProcessingDocuments marks all documents in 'processing' or 'queued' status and compiled booklets in 'compiling' status as 'failed'.
+// TODO: Expose this function as a secured administrative API route (e.g., POST /api/admin/clean-stale-processes)
+// triggered by an external cron/scheduler. The endpoint should require API key authentication (with admin key rotation).
+//
+// FailStaleProcessingDocuments marks all documents in 'processing' or 'queued' status and compiled booklets in 'compiling' status as 'failed' if they are older than 15 minutes.
 func FailStaleProcessingDocuments() error {
-	log.Println("Cleaning up stale background processes from database...")
+	log.Println("Cleaning up stale background processes (older than 15 minutes) from database...")
 	
 	// Fail stale documents
 	res, err := DB.Exec(`
 		UPDATE documents 
 		SET status = 'failed', updated_at = CURRENT_TIMESTAMP 
-		WHERE status = 'processing' OR status = 'queued'
+		WHERE (status = 'processing' OR status = 'queued')
+		  AND updated_at < CURRENT_TIMESTAMP - INTERVAL '15 minutes'
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to clean up stale documents: %w", err)
@@ -197,6 +202,7 @@ func FailStaleProcessingDocuments() error {
 		UPDATE compiled_booklets 
 		SET status = 'failed' 
 		WHERE status = 'compiling'
+		  AND created_at < CURRENT_TIMESTAMP - INTERVAL '15 minutes'
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to clean up stale compiled booklets: %w", err)

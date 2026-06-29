@@ -546,14 +546,14 @@ func CompileBooklet(ctx context.Context, dbPages []DBPageInfo, config BookletCon
 	return storageKey, nil
 }
 
-// CompileBookletSlice compiles only specific physical sheets and/or sides (fronts/backs) of a booklet directly from single pages
-func CompileBookletSlice(ctx context.Context, dbPages []DBPageInfo, config BookletConfig, filterType string, sheetRange string) (string, error) {
-	logger.Logf(ctx, "[CompileBookletSlice] Compiling slice for signatureSize=%d, filterType=%s, sheetRange=%s", config.SignatureSize, filterType, sheetRange)
+// CompileBookletSlice compiles only specific physical sheets and/or sides (fronts/backs) of a booklet directly from single pages to a local file
+func CompileBookletSlice(ctx context.Context, dbPages []DBPageInfo, config BookletConfig, filterType string, sheetRange string, localOutPath string) error {
+	logger.Logf(ctx, "[CompileBookletSlice] Compiling slice for signatureSize=%d, filterType=%s, sheetRange=%s to %s", config.SignatureSize, filterType, sheetRange, localOutPath)
 	
 	// Create a temp directory for downloaded single pages
 	tempDir, err := os.MkdirTemp("", "booklet-compile-slice-*")
 	if err != nil {
-		return "", fmt.Errorf("failed to create temp dir: %w", err)
+		return fmt.Errorf("failed to create temp dir: %w", err)
 	}
 	defer os.RemoveAll(tempDir)
 
@@ -596,7 +596,7 @@ func CompileBookletSlice(ctx context.Context, dbPages []DBPageInfo, config Bookl
 		endSheet = totalSheets
 	}
 	if startSheet > endSheet {
-		return "", fmt.Errorf("invalid sheet range: %s", sheetRange)
+		return fmt.Errorf("invalid sheet range: %s", sheetRange)
 	}
 
 	// Select the sides we want to render
@@ -625,7 +625,7 @@ func CompileBookletSlice(ctx context.Context, dbPages []DBPageInfo, config Bookl
 	}
 
 	if len(selectedSides) == 0 {
-		return "", fmt.Errorf("no sheets selected by filter")
+		return fmt.Errorf("no sheets selected by filter")
 	}
 
 	// Find the exact pages we need to download
@@ -653,7 +653,7 @@ func CompileBookletSlice(ctx context.Context, dbPages []DBPageInfo, config Bookl
 		localPath := filepath.Join(tempDir, fmt.Sprintf("page_%d.pdf", pageNum))
 		err := storage.DownloadFile(ctx, dbPage.StoragePath, localPath)
 		if err != nil {
-			return "", fmt.Errorf("failed to download page %d: %w", pageNum, err)
+			return fmt.Errorf("failed to download page %d: %w", pageNum, err)
 		}
 	}
 
@@ -730,12 +730,12 @@ func CompileBookletSlice(ctx context.Context, dbPages []DBPageInfo, config Bookl
 
 		// Draw Left Page
 		if err := drawPageInSlot(sheet.LeftPage, false); err != nil {
-			return "", err
+			return err
 		}
 
 		// Draw Right Page
 		if err := drawPageInSlot(sheet.RightPage, true); err != nil {
-			return "", err
+			return err
 		}
 
 		// Draw folding guidelines if enabled
@@ -748,23 +748,13 @@ func CompileBookletSlice(ctx context.Context, dbPages []DBPageInfo, config Bookl
 		}
 	}
 
-	// Write compiled PDF slice to local temp file
-	sliceID := uuid.New().String()
-	localOutPath := filepath.Join(tempDir, fmt.Sprintf("slice_%s.pdf", sliceID))
-	
+	// Write compiled PDF slice directly to destination
 	err = pdfDoc.WritePdf(localOutPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to write compiled PDF slice: %w", err)
+		return fmt.Errorf("failed to write compiled PDF slice: %w", err)
 	}
 
-	// Upload compiled slice to MinIO
-	storageKey := fmt.Sprintf("temp_filtered/%s.pdf", sliceID)
-	err = storage.UploadFile(ctx, storageKey, localOutPath, "application/pdf")
-	if err != nil {
-		return "", fmt.Errorf("failed to upload booklet slice to MinIO: %w", err)
-	}
-
-	return storageKey, nil
+	return nil
 }
 
 type SheetSide struct {

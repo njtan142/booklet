@@ -87,6 +87,18 @@ func HandleListDocuments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Dynamic check to fail/cleanup stale documents: fail processing documents after 15 minutes of inactivity,
+	// and fail queued documents if they have been waiting in the queue for more than 30 minutes.
+	_, err := db.DB.Exec(`
+		UPDATE documents 
+		SET status = 'failed', updated_at = CURRENT_TIMESTAMP 
+		WHERE (status = 'processing' AND updated_at < CURRENT_TIMESTAMP - INTERVAL '15 minutes')
+		   OR (status = 'queued' AND updated_at < CURRENT_TIMESTAMP - INTERVAL '30 minutes')
+	`)
+	if err != nil {
+		logger.Logf(r.Context(), "Warning: failed to dynamically clean up stale documents: %v", err)
+	}
+
 	logger.Logf(r.Context(), "HandleListDocuments: querying database for active documents")
 	rows, err := db.DB.Query(`SELECT id, name, total_pages, split_pages, parsed_pages, status, created_at, updated_at FROM documents WHERE is_dismissed = FALSE ORDER BY created_at DESC`)
 	if err != nil {
@@ -609,11 +621,21 @@ func HandleUploadDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	outField.Close()
 
+	// Upload original PDF to MinIO
+	originalKey := fmt.Sprintf("documents/%s/original.pdf", docID)
+	err = storage.UploadFile(r.Context(), originalKey, localPath, "application/pdf")
+	if err != nil {
+		os.RemoveAll(tempDir)
+		logger.Logf(r.Context(), "Error: failed to upload original PDF %s to MinIO: %v", docID, err)
+		http.Error(w, "storage error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	// Insert document metadata with processing status
 	_, err = db.DB.Exec(`
-		INSERT INTO documents (id, name, total_pages, split_pages, parsed_pages, status, created_at, updated_at) 
-		VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`, 
-		docID, header.Filename, 0, 0, 0, "queued")
+		INSERT INTO documents (id, name, total_pages, split_pages, parsed_pages, status, original_storage_path, created_at, updated_at) 
+		VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`, 
+		docID, header.Filename, 0, 0, 0, "queued", originalKey)
 	
 	if err != nil {
 		os.RemoveAll(tempDir)
@@ -624,9 +646,14 @@ func HandleUploadDocument(w http.ResponseWriter, r *http.Request) {
 
 	metrics.DocumentUploadsTotal.With(prometheus.Labels{"status": "queued"}).Inc()
 
-	logger.Logf(r.Context(), "HandleUploadDocument: metadata inserted, starting background processing worker")
-	// Spawn background worker to split pages, extract text, upload to MinIO and generate embeddings
-	go runBackgroundDocumentProcessing(docID, localPath, tempDir)
+	if os.Getenv("SYNC_PROCESSING") == "true" {
+		logger.Logf(r.Context(), "HandleUploadDocument: executing document processing synchronously (serverless mode)")
+		runBackgroundDocumentProcessing(docID, localPath, tempDir)
+	} else {
+		logger.Logf(r.Context(), "HandleUploadDocument: metadata inserted, starting background processing worker")
+		// Spawn background worker to split pages, extract text, upload to MinIO and generate embeddings
+		go runBackgroundDocumentProcessing(docID, localPath, tempDir)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
@@ -642,7 +669,10 @@ func runBackgroundDocumentProcessing(docID uuid.UUID, localPath string, tempDir 
 	ctx := logger.WithLogger(context.Background(), rl)
 	success := false
 
-	var processedPages int32 = 0
+	var existingPages int32 = 0
+	_ = db.DB.QueryRow(`SELECT COUNT(*) FROM document_pages WHERE document_id = $1`, docID).Scan(&existingPages)
+
+	processedPages := existingPages
 	var totalPagesVal int32 = 0
 	var currentStep atomic.Value
 	currentStep.Store("queued")
@@ -718,16 +748,33 @@ func runBackgroundDocumentProcessing(docID uuid.UUID, localPath string, tempDir 
 	atomic.StoreInt32(&totalPagesVal, int32(totalPages))
 	currentStep.Store("splitting PDF")
 
-	var processedCount int32
+	processedCount := existingPages
 	err = pdf.SplitDocument(ctx, docID.String(), localPath, func(current, total int, step string) {
 		currentStep.Store(step)
 		if step == "splitting PDF" {
+			// When splitting, the progress is calculated relative to the split count,
+			// but we keep the database split_pages up to date.
 			atomic.StoreInt32(&processedPages, int32(current))
 			atomic.StoreInt32(&totalPagesVal, int32(total))
 			// Dynamically update split_pages count in database during splitting
 			_, _ = db.DB.Exec(`UPDATE documents SET split_pages = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, current, docID)
 		}
 	}, func(page pdf.PageInfo) error {
+		// Check if page already exists in document_pages ledger to support resumption
+		var exists bool
+		err = db.DB.QueryRow(`
+			SELECT EXISTS(
+				SELECT 1 FROM document_pages 
+				WHERE document_id = $1 AND page_number = $2
+			)`, docID, page.PageNumber).Scan(&exists)
+		if err != nil {
+			return fmt.Errorf("failed to check page existence in ledger: %w", err)
+		}
+		if exists {
+			logger.Logf(ctx, "Page %d of document %s already exists in ledger. Skipping.", page.PageNumber, docID)
+			return nil
+		}
+
 		// Upload single page to MinIO
 		objectName := fmt.Sprintf("documents/%s/pages/page_%d.pdf", docID, page.PageNumber)
 		err = storage.UploadFile(ctx, objectName, page.LocalPath, "application/pdf")
@@ -757,8 +804,12 @@ func runBackgroundDocumentProcessing(docID uuid.UUID, localPath string, tempDir 
 		currentProcessed := atomic.AddInt32(&processedCount, 1)
 		atomic.StoreInt32(&processedPages, currentProcessed)
 
-		// Update parsed_pages and updated_at in documents table
-		_, err = db.DB.Exec(`UPDATE documents SET parsed_pages = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, currentProcessed, docID)
+		// Update parsed_pages and updated_at in documents table using an exact count of the processed pages to prevent race conditions
+		_, err = db.DB.Exec(`
+			UPDATE documents 
+			SET parsed_pages = (SELECT COUNT(*) FROM document_pages WHERE document_id = $1), 
+			    updated_at = CURRENT_TIMESTAMP 
+			WHERE id = $1`, docID)
 		if err != nil {
 			rl.Logf("Warning: failed to update processed pages count: %v", err)
 		}
@@ -829,6 +880,17 @@ func HandleListBooklets(w http.ResponseWriter, r *http.Request) {
 		logger.Logf(r.Context(), "HandleListBooklets: method %s not allowed", r.Method)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
+	}
+
+	// Dynamic check to fail/cleanup stale compiled booklets that haven't updated in 30 minutes
+	_, err := db.DB.Exec(`
+		UPDATE compiled_booklets 
+		SET status = 'failed' 
+		WHERE status = 'compiling' 
+		  AND created_at < CURRENT_TIMESTAMP - INTERVAL '30 minutes'
+	`)
+	if err != nil {
+		logger.Logf(r.Context(), "Warning: failed to dynamically clean up stale compiled booklets: %v", err)
 	}
 
 	rows, err := db.DB.Query(`
@@ -930,6 +992,140 @@ func cleanOldBookletSessions(ctx context.Context, docID string, req BookletCompi
 	}
 }
 
+type BookletCleanupRequest struct {
+	Margin           float64 `json:"margin"`
+	Gutter           float64 `json:"gutter"`
+	PaperSize        string  `json:"paper_size"`
+	SignatureSize    int     `json:"signature_size"`
+	Guides           bool    `json:"guides"`
+	CurrentBookletID string  `json:"current_booklet_id"`
+}
+
+func HandleCleanupBooklets(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		logger.Logf(r.Context(), "HandleCleanupBooklets: method %s not allowed", r.Method)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	docID := r.PathValue("id")
+	if _, err := uuid.Parse(docID); err != nil {
+		logger.Logf(r.Context(), "HandleCleanupBooklets: invalid UUID format: %s", docID)
+		http.Error(w, "invalid UUID format", http.StatusBadRequest)
+		return
+	}
+
+	var req BookletCleanupRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		logger.Logf(r.Context(), "Error: failed to decode booklet cleanup request JSON: %v", err)
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	currentUUID, err := uuid.Parse(req.CurrentBookletID)
+	if err != nil {
+		logger.Logf(r.Context(), "Error: invalid CurrentBookletID: %v", err)
+		http.Error(w, "invalid CurrentBookletID", http.StatusBadRequest)
+		return
+	}
+
+	compileReq := BookletCompileRequest{
+		Margin:        req.Margin,
+		Gutter:        req.Gutter,
+		PaperSize:     req.PaperSize,
+		SignatureSize: req.SignatureSize,
+		Guides:        req.Guides,
+	}
+
+	cleanOldBookletSessions(r.Context(), docID, compileReq, currentUUID)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Old booklet sessions cleaned up successfully"})
+}
+
+func HandleResumeDocument(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		logger.Logf(r.Context(), "HandleResumeDocument: method %s not allowed", r.Method)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	docIDStr := r.PathValue("id")
+	logger.Logf(r.Context(), "HandleResumeDocument: request to resume docID=%s", docIDStr)
+	docID, err := uuid.Parse(docIDStr)
+	if err != nil {
+		logger.Logf(r.Context(), "HandleResumeDocument: invalid UUID format: %s", docIDStr)
+		http.Error(w, "invalid UUID format", http.StatusBadRequest)
+		return
+	}
+
+	var status, originalStoragePath, name string
+	err = db.DB.QueryRow(`
+		SELECT status, original_storage_path, name 
+		FROM documents WHERE id = $1`, docID).Scan(&status, &originalStoragePath, &name)
+	
+	if err == sql.ErrNoRows {
+		logger.Logf(r.Context(), "HandleResumeDocument: document %s not found", docID)
+		http.Error(w, "document not found", http.StatusNotFound)
+		return
+	} else if err != nil {
+		logger.Logf(r.Context(), "Error: failed to query document details: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if status == "ready" {
+		logger.Logf(r.Context(), "HandleResumeDocument: document %s is already ready", docID)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"message": "Document is already fully processed", "document_id": docID.String()})
+		return
+	}
+
+	if originalStoragePath == "" {
+		logger.Logf(r.Context(), "Error: original storage path is empty for document %s", docID)
+		http.Error(w, "original document file is missing, cannot resume", http.StatusConflict)
+		return
+	}
+
+	// Create local temp file/dir to download original PDF
+	tempDir, err := os.MkdirTemp("", "booklet-resume-*")
+	if err != nil {
+		logger.Logf(r.Context(), "Error: failed to create temp dir for resume: %v", err)
+		http.Error(w, "failed to create temp dir", http.StatusInternalServerError)
+		return
+	}
+
+	localPath := filepath.Join(tempDir, name)
+	err = storage.DownloadFile(r.Context(), originalStoragePath, localPath)
+	if err != nil {
+		os.RemoveAll(tempDir)
+		logger.Logf(r.Context(), "Error: failed to download original PDF from storage for resume: %v", err)
+		http.Error(w, "failed to retrieve original file: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Update status back to queued/processing so client knows it is running
+	_, _ = db.DB.Exec(`UPDATE documents SET status = 'queued', updated_at = CURRENT_TIMESTAMP WHERE id = $1`, docID)
+
+	if os.Getenv("SYNC_PROCESSING") == "true" {
+		logger.Logf(r.Context(), "HandleResumeDocument: executing document processing synchronously (serverless mode)")
+		runBackgroundDocumentProcessing(docID, localPath, tempDir)
+	} else {
+		logger.Logf(r.Context(), "HandleResumeDocument: started background processing worker for resumption")
+		go runBackgroundDocumentProcessing(docID, localPath, tempDir)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(map[string]string{
+		"message":     "Document processing resumed successfully.",
+		"document_id": docID.String(),
+	})
+}
+
+
 func HandleCompileBooklet(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		logger.Logf(r.Context(), "HandleCompileBooklet: method %s not allowed", r.Method)
@@ -1029,12 +1225,14 @@ func HandleCompileBooklet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Clean up any old sessions (e.g. failed ones) for the same document and config
-	cleanOldBookletSessions(r.Context(), docID, req, bookletID)
-
-	// Spawn background booklet compiler
-	logger.Logf(r.Context(), "HandleCompileBooklet: starting background compiler task for bookletID=%s", bookletID)
-	go runBackgroundBookletCompilation(bookletID, docID, req)
+	if os.Getenv("SYNC_PROCESSING") == "true" {
+		logger.Logf(r.Context(), "HandleCompileBooklet: executing compilation synchronously (serverless mode)")
+		runBackgroundBookletCompilation(bookletID, docID, req)
+	} else {
+		// Spawn background booklet compiler
+		logger.Logf(r.Context(), "HandleCompileBooklet: starting background compiler task for bookletID=%s", bookletID)
+		go runBackgroundBookletCompilation(bookletID, docID, req)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
@@ -1228,6 +1426,9 @@ func HandleDownloadBooklet(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	targetPath := storagePath
 
+	var localSliceFile string
+	var tempSliceDir string
+
 	// Apply filtering/slicing on-the-fly if requested
 	if filter != "" || sheets != "" {
 		logger.Logf(r.Context(), "HandleDownloadBooklet: slice requested. Slicing booklet targetPath=%s on-the-fly", targetPath)
@@ -1255,56 +1456,59 @@ func HandleDownloadBooklet(w http.ResponseWriter, r *http.Request) {
 			dbPages = append(dbPages, p)
 		}
 
-		filteredKey, err := pdf.CompileBookletSlice(ctx, dbPages, pdf.BookletConfig{
+		tempSliceDir, err = os.MkdirTemp("", "booklet-slice-*")
+		if err != nil {
+			logger.Logf(r.Context(), "Error: failed to create temp dir for slice: %v", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		defer os.RemoveAll(tempSliceDir)
+
+		localSliceFile = filepath.Join(tempSliceDir, "slice.pdf")
+		err = pdf.CompileBookletSlice(ctx, dbPages, pdf.BookletConfig{
 			Margin:        margin,
 			Gutter:        gutter,
 			PaperSize:     paperSize,
 			SignatureSize: sigSize,
 			Guides:        guides,
-		}, filter, sheets)
+		}, filter, sheets, localSliceFile)
 
 		if err != nil {
 			logger.Logf(r.Context(), "Error: failed to slice booklet pages for %s: %v", bookletID, err)
 			http.Error(w, "failed to slice booklet pages: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		targetPath = filteredKey
-		logger.Logf(r.Context(), "HandleDownloadBooklet: compiled slice successfully, temporary slice storage path is %s", filteredKey)
-		// Schedule clean up of temporary sliced files in MinIO after streaming
-		defer func() {
-			go func() {
-				// Wait a brief moment to ensure connection closes, then delete the temp file
-				time.Sleep(30 * time.Second)
-				_ = storage.DeleteFile(context.Background(), filteredKey)
-			}()
-		}()
 	}
 
-	// Instead of redirecting directly, we download and stream the PDF to client to prevent CORS blocks
-	// or we can redirect to the presigned URL. Since MinIO might be internal in docker-compose,
-	// streaming the PDF directly from the backend is 100% reliable and SRE-friendly!
-	logger.Logf(r.Context(), "Streaming PDF booklet %s to client...", targetPath)
-	
-	// Create a temporary file to download to
-	tempDir, err := os.MkdirTemp("", "booklet-stream-*")
-	if err != nil {
-		logger.Logf(r.Context(), "Error: failed to create temp dir for streaming %s: %v", bookletID, err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
-	defer os.RemoveAll(tempDir)
+	var streamFile string
+	var tempStreamDir string
 
-	tempFile := filepath.Join(tempDir, "temp.pdf")
-	err = storage.DownloadFile(ctx, targetPath, tempFile)
-	if err != nil {
-		logger.Logf(r.Context(), "Error: failed to download booklet %s from storage: %v", bookletID, err)
-		http.Error(w, "failed to stream from object store", http.StatusInternalServerError)
-		return
+	if localSliceFile != "" {
+		streamFile = localSliceFile
+	} else {
+		// Download the main compiled booklet from storage
+		var err error
+		tempStreamDir, err = os.MkdirTemp("", "booklet-stream-*")
+		if err != nil {
+			logger.Logf(r.Context(), "Error: failed to create temp dir for streaming %s: %v", bookletID, err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		defer os.RemoveAll(tempStreamDir)
+
+		streamFile = filepath.Join(tempStreamDir, "temp.pdf")
+		logger.Logf(r.Context(), "Streaming PDF booklet %s to client...", targetPath)
+		err = storage.DownloadFile(ctx, targetPath, streamFile)
+		if err != nil {
+			logger.Logf(r.Context(), "Error: failed to download booklet %s from storage: %v", bookletID, err)
+			http.Error(w, "failed to stream from object store", http.StatusInternalServerError)
+			return
+		}
 	}
 
-	f, err := os.Open(tempFile)
+	f, err := os.Open(streamFile)
 	if err != nil {
-		logger.Logf(r.Context(), "Error: failed to open temp file %s for streaming: %v", tempFile, err)
+		logger.Logf(r.Context(), "Error: failed to open file %s for streaming: %v", streamFile, err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -1547,3 +1751,49 @@ func HandleDocumentSearchPreviewPDF(w http.ResponseWriter, r *http.Request) {
 		logger.Logf(ctx, "Error: failed to stream search preview PDF: %v", err)
 	}
 }
+
+// HandleCleanStaleProcesses triggers FailStaleProcessingDocuments to cleanup stale document/booklet states.
+// Exposes this function as a secured administrative API route, requiring X-API-Key auth.
+func HandleCleanStaleProcesses(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	adminKey := os.Getenv("ADMIN_API_KEY")
+	if adminKey == "" {
+		// Fallback for development if not explicitly configured in env
+		adminKey = "dev-admin-key"
+	}
+
+	reqKey := r.Header.Get("X-API-Key")
+	if reqKey == "" {
+		// Also allow Bearer token under Authorization
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			reqKey = strings.TrimPrefix(authHeader, "Bearer ")
+		}
+	}
+
+	if reqKey != adminKey {
+		logger.Logf(r.Context(), "HandleCleanStaleProcesses: unauthorized access attempt")
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	logger.Logf(r.Context(), "HandleCleanStaleProcesses: triggering stale background processes cleanup")
+	err := db.FailStaleProcessingDocuments()
+	if err != nil {
+		logger.Logf(r.Context(), "Error: failed to clean stale processes: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":  "success",
+		"message": "Stale background processes cleaned up successfully",
+	})
+}
+
