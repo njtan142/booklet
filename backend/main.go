@@ -71,6 +71,7 @@ func main() {
 	// Booklet Compilation routes (require authentication middleware)
 	mux.Handle("/api/documents/{id}/booklet/preview", auth.RequireAuth(http.HandlerFunc(handlers.HandleGetBookletPreviewPDF)))
 	mux.Handle("/api/documents/{id}/booklet/compile", auth.RequireAuth(http.HandlerFunc(handlers.HandleCompileBooklet)))
+	mux.Handle("/api/booklets", auth.RequireAuth(http.HandlerFunc(handlers.HandleListBooklets)))
 	mux.Handle("/api/booklets/{id}", auth.RequireAuth(http.HandlerFunc(handlers.HandleGetBooklet)))
 	mux.Handle("/api/booklets/{id}/download", auth.RequireAuth(http.HandlerFunc(handlers.HandleDownloadBooklet)))
 

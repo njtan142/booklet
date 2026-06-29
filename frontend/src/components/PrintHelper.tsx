@@ -32,11 +32,6 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, documentId,
   const [selectedSheet, setSelectedSheet] = useState<number>(1)
   const [previewSide, setPreviewSide] = useState<"front" | "back">("front")
 
-  // Recovery states
-  const [ruinedStart, setRuinedStart] = useState<string>("")
-  const [ruinedEnd, setRuinedEnd] = useState<string>("")
-  const [recoveryError, setRecoveryError] = useState<string>("")
-
   // Total sheets in booklet is Ceil(totalPages / 4).
   // Target pages is Ceil(totalPages / 4) * 4.
   const targetPages = Math.ceil(totalPages / 4) * 4
@@ -62,23 +57,8 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, documentId,
     }))
   }
 
-  const handleDownloadRecovery = (type: "fronts" | "backs" | "both") => {
-    setRecoveryError("")
-    const start = parseInt(ruinedStart)
-    const end = ruinedEnd ? parseInt(ruinedEnd) : start
-
-    if (isNaN(start) || start < 1 || start > maxBookletPage) {
-      setRecoveryError(`Please enter a valid starting page number between 1 and ${maxBookletPage}`)
-      return
-    }
-
-    if (isNaN(end) || end < start || end > maxBookletPage) {
-      setRecoveryError(`Please enter a valid ending page number between ${start} and ${maxBookletPage}`)
-      return
-    }
-
-    const rangeStr = `${start}-${end}`
-    const downloadUrl = api.getDownloadUrl(bookletId, type === "both" ? undefined : type, undefined, rangeStr)
+  const handleDownloadSheet = (type: "fronts" | "backs" | "both") => {
+    const downloadUrl = api.getDownloadUrl(bookletId, type === "both" ? undefined : type, String(selectedSheet))
     window.open(downloadUrl, "_blank")
   }
 
@@ -341,82 +321,25 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, documentId,
 
 
             </div>
-            <div className="mt-3 flex items-center justify-between text-[10px] text-muted-foreground border-t border-border/30 pt-2 z-10">
-              <span>Physical Sheet {selectedSheet} of {totalSheets}</span>
-              <span className="font-semibold text-primary">
-                {previewSide === "front" ? "Odds (Front Layout)" : "Evens (Back Layout)"}
-              </span>
-            </div>
-          </div>
-
-          {/* Recovery Card */}
-          <div className="glass p-4 rounded-xl border-border space-y-3">
-            <div className="flex items-center gap-2 border-b border-border/40 pb-1.5">
-              <AlertTriangle className="h-4 w-4 text-destructive" />
-              <h3 className="text-xs font-bold text-foreground">Ruined Sheet Reprint Recovery</h3>
-            </div>
-            <p className="text-[11px] text-muted-foreground leading-relaxed">
-              If a sheet was ruined, enter the ruined booklet page numbers. We'll download only those fronts or backs.
-            </p>
-
-            <div className="space-y-2">
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <label htmlFor="ruined-start-input" className="text-[9px] uppercase font-bold text-muted-foreground tracking-wider">Start Page #</label>
-                  <input
-                    id="ruined-start-input"
-                    type="number"
-                    min="1"
-                    max={targetPages}
-                    placeholder="e.g. 13"
-                    value={ruinedStart}
-                    onChange={(e) => setRuinedStart(e.target.value)}
-                    className="w-full bg-background border border-border rounded px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label htmlFor="ruined-end-input" className="text-[9px] uppercase font-bold text-muted-foreground tracking-wider">End Page # (Opt)</label>
-                  <input
-                    id="ruined-end-input"
-                    type="number"
-                    min="1"
-                    max={targetPages}
-                    placeholder="e.g. 16"
-                    value={ruinedEnd}
-                    onChange={(e) => setRuinedEnd(e.target.value)}
-                    className="w-full bg-background border border-border rounded px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                </div>
+            <div className="mt-3 flex flex-col gap-3 border-t border-border/30 pt-3 z-10">
+              <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                <span>Physical Sheet {selectedSheet} of {totalSheets}</span>
+                <span className="font-semibold text-primary">
+                  {previewSide === "front" ? "Odds (Front Layout)" : "Evens (Back Layout)"}
+                </span>
               </div>
-
-              {recoveryError && (
-                <p className="text-destructive text-[10px] font-medium">{recoveryError}</p>
-              )}
-
-              <div className="grid grid-cols-2 gap-2 pt-1">
-                <Button
-                  variant="destructive"
-                  className="text-[11px] h-8"
-                  onClick={() => handleDownloadRecovery("fronts")}
-                >
-                  <RotateCw className="h-3 w-3 mr-1" />
-                  Reprint Fronts
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" className="flex-1 text-[10px] h-7" onClick={() => handleDownloadSheet("fronts")}>
+                  <Download className="h-3 w-3 mr-1" />
+                  Front
                 </Button>
-                <Button
-                  variant="destructive"
-                  className="text-[11px] h-8"
-                  onClick={() => handleDownloadRecovery("backs")}
-                >
-                  <RotateCw className="h-3 w-3 mr-1" />
-                  Reprint Backs
+                <Button variant="outline" size="sm" className="flex-1 text-[10px] h-7" onClick={() => handleDownloadSheet("backs")}>
+                  <Download className="h-3 w-3 mr-1" />
+                  Back
                 </Button>
-                <Button
-                  variant="outline"
-                  className="col-span-2 text-[11px] h-8 text-foreground border-border hover:bg-muted/70"
-                  onClick={() => handleDownloadRecovery("both")}
-                >
-                  <RefreshCw className="h-3 w-3 mr-1" />
-                  Reprint Both (Full Sheets)
+                <Button variant="outline" size="sm" className="flex-1 text-[10px] h-7 bg-primary/10 border-primary/20 text-primary hover:bg-primary/20" onClick={() => handleDownloadSheet("both")}>
+                  <Download className="h-3 w-3 mr-1" />
+                  Both
                 </Button>
               </div>
             </div>

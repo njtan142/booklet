@@ -40,6 +40,20 @@ export interface BookletInfo {
   created_at: string;
 }
 
+export interface BookletListResponse {
+  id: string;
+  document_id: string;
+  document_name: string;
+  total_pages: number;
+  status: "compiling" | "ready" | "failed";
+  config_margin: number;
+  config_gutter: number;
+  config_paper_size: string;
+  config_signature_size: number;
+  config_guides: boolean;
+  created_at: string;
+}
+
 export interface SearchResult {
   document_id: string;
   document_name: string;
@@ -116,6 +130,8 @@ export const api = {
   },
 
   // Booklet
+  listBooklets: () => apiFetch<BookletListResponse[]>("/booklets"),
+  
   compileBooklet: (
     docId: string, 
     config: { margin: number; gutter: number; paper_size: string; signature_size: number; guides: boolean }

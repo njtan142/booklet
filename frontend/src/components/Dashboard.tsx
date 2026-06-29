@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { api } from "../api"
-import type { DocumentInfo, DocumentDetail } from "../api"
+import type { DocumentInfo, DocumentDetail, BookletListResponse } from "../api"
 import { Button } from "./ui/button"
 import { Input } from "./ui/input"
 import { Select } from "./ui/select"
@@ -80,7 +80,37 @@ export const Dashboard: React.FC = () => {
     }
   })
 
-  // 3. Upload State and Helpers
+  // 3. Fetch Recent Print Sessions
+  const { data: recentSessions, isLoading: loadingSessions } = useQuery({
+    queryKey: ["booklets"],
+    queryFn: api.listBooklets,
+    refetchInterval: (query) => {
+      const hasProcessing = query.state.data?.some(b => b.status === "compiling")
+      return hasProcessing ? 2000 : false
+    }
+  })
+
+  const handleSelectSession = (session: BookletListResponse) => {
+    setSelectedDocId(session.document_id)
+    setMargin(session.config_margin)
+    setGutter(session.config_gutter)
+    setPaperSize(session.config_paper_size)
+    setSignatureSize(session.config_signature_size)
+    setGuides(session.config_guides)
+    setActiveBookletId(session.id)
+    
+    if (session.status === "compiling") {
+      setPollingBookletId(session.id)
+      setCompiling(true)
+      setCompileStatus("Arranging pages & generating canvas...")
+    } else {
+      setPollingBookletId(null)
+      setCompiling(false)
+      setCompileStatus("")
+    }
+  }
+
+  // 4. Upload State and Helpers
   const [inFlightUploads, setInFlightUploads] = useState<{ id: string; fileName: string }[]>([])
 
   const handleUploadFiles = async (files: FileList) => {
@@ -455,6 +485,52 @@ export const Dashboard: React.FC = () => {
             </ScrollArea>
           )}
         </div>
+
+        <div className="glass p-6 rounded-2xl border-border space-y-4">
+          <h3 className="text-lg font-bold text-foreground m-0">Recent Print Sessions</h3>
+          {loadingSessions ? (
+            <div className="flex items-center justify-center py-6">
+              <Loader2 className="h-5 w-5 animate-spin text-primary" aria-hidden="true" />
+            </div>
+          ) : !recentSessions || recentSessions.length === 0 ? (
+            <p className="text-muted-foreground text-xs text-center py-4">No recent print sessions.</p>
+          ) : (
+            <ScrollArea className="max-h-[300px]">
+              <div className="space-y-2.5 pr-4">
+                {recentSessions.map((session) => (
+                  <Button
+                    type="button"
+                    key={session.id}
+                    variant="ghost"
+                    onClick={() => handleSelectSession(session)}
+                    className="w-full text-left h-auto p-3.5 rounded-xl border flex items-center justify-between gap-4 cursor-pointer transition-all whitespace-normal bg-background/60 border-border hover:border-primary/25"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="p-2 rounded-lg bg-muted text-muted-foreground">
+                        <Printer className="h-4 w-4" aria-hidden="true" />
+                      </div>
+                      <div className="min-w-0">
+                        <h4 className="text-xs font-bold text-foreground truncate m-0">{session.document_name}</h4>
+                        <p className="text-[10px] text-muted-foreground mt-0.5">
+                          {session.config_paper_size.toUpperCase()} | Mar: {session.config_margin} | Gut: {session.config_gutter} | Sig: {session.config_signature_size}
+                        </p>
+                      </div>
+                    </div>
+                    <div>
+                      {session.status === "compiling" ? (
+                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden="true" />
+                      ) : session.status === "failed" ? (
+                        <AlertCircle className="h-4 w-4 text-destructive" aria-hidden="true" />
+                      ) : (
+                        <FileCheck className="h-4 w-4 text-emerald-500" aria-hidden="true" />
+                      )}
+                    </div>
+                  </Button>
+                ))}
+              </div>
+            </ScrollArea>
+          )}
+        </div>
       </div>
 
       {/* Right panel: Compile Booklet parameters & Details */}
@@ -535,8 +611,9 @@ export const Dashboard: React.FC = () => {
                 <div className="space-y-0.5">
                   <Label htmlFor="paper-size-select" className="text-[10px] font-semibold text-muted-foreground uppercase">Paper Format</Label>
                   <Select id="paper-size-select" value={paperSize} onChange={(e) => setPaperSize(e.target.value)} className="h-7 text-xs py-0">
-                    <option value="a4">A4 Landscape</option>
-                    <option value="letter">Letter Landscape</option>
+                    <option value="a4">A4 Landscape (11.7×8.3")</option>
+                    <option value="letter">Letter Landscape (11×8.5")</option>
+                    <option value="folio">Folio Landscape (13×8.5")</option>
                   </Select>
                 </div>
 

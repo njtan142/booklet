@@ -430,9 +430,15 @@ func HandleGetBookletPreviewPDF(w http.ResponseWriter, r *http.Request) {
 	// Configure paper size
 	var sheetWidth, sheetHeight float64
 	if strings.ToLower(paperSize) == "letter" {
+		// Letter Landscape: 8.5 x 11 in
 		sheetWidth = 792.00
 		sheetHeight = 612.00
+	} else if strings.ToLower(paperSize) == "folio" {
+		// Folio Landscape: 8.5 x 13 in
+		sheetWidth = 936.00
+		sheetHeight = 612.00
 	} else {
+		// Default A4 Landscape
 		sheetWidth = 841.89
 		sheetHeight = 595.28
 	}
@@ -804,6 +810,126 @@ type BookletResponse struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type BookletListResponse struct {
+	ID            string    `json:"id"`
+	DocID         string    `json:"document_id"`
+	DocName       string    `json:"document_name"`
+	TotalPages    int       `json:"total_pages"`
+	Status        string    `json:"status"`
+	Margin        float64   `json:"config_margin"`
+	Gutter        float64   `json:"config_gutter"`
+	PaperSize     string    `json:"config_paper_size"`
+	SignatureSize int       `json:"config_signature_size"`
+	Guides        bool      `json:"config_guides"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+func HandleListBooklets(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		logger.Logf(r.Context(), "HandleListBooklets: method %s not allowed", r.Method)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	rows, err := db.DB.Query(`
+		SELECT 
+			cb.id, 
+			cb.document_id, 
+			d.name, 
+			d.total_pages,
+			cb.status, 
+			cb.config_margin, 
+			cb.config_gutter, 
+			cb.config_paper_size, 
+			cb.config_signature_size, 
+			cb.config_guides, 
+			cb.created_at
+		FROM compiled_booklets cb
+		JOIN documents d ON cb.document_id = d.id
+		ORDER BY cb.created_at DESC`)
+	if err != nil {
+		logger.Logf(r.Context(), "Error: failed to query booklets: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var list []BookletListResponse
+	for rows.Next() {
+		var item BookletListResponse
+		err := rows.Scan(
+			&item.ID,
+			&item.DocID,
+			&item.DocName,
+			&item.TotalPages,
+			&item.Status,
+			&item.Margin,
+			&item.Gutter,
+			&item.PaperSize,
+			&item.SignatureSize,
+			&item.Guides,
+			&item.CreatedAt,
+		)
+		if err != nil {
+			logger.Logf(r.Context(), "Error: failed to scan booklet: %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		list = append(list, item)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(list)
+}
+
+func cleanOldBookletSessions(ctx context.Context, docID string, req BookletCompileRequest, currentBookletID uuid.UUID) {
+	rows, err := db.DB.Query(`
+		SELECT id, storage_path 
+		FROM compiled_booklets
+		WHERE document_id = $1
+		  AND config_margin = $2
+		  AND config_gutter = $3
+		  AND config_paper_size = $4
+		  AND config_signature_size = $5
+		  AND config_guides = $6
+		  AND id != $7`,
+		docID, req.Margin, req.Gutter, req.PaperSize, req.SignatureSize, req.Guides, currentBookletID)
+	if err != nil {
+		logger.Logf(ctx, "Warning: failed to query old booklet sessions for cleanup: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	var idsToDelete []string
+	var pathsToDelete []string
+
+	for rows.Next() {
+		var id string
+		var storagePath sql.NullString
+		if err := rows.Scan(&id, &storagePath); err == nil {
+			idsToDelete = append(idsToDelete, id)
+			if storagePath.Valid && storagePath.String != "" {
+				pathsToDelete = append(pathsToDelete, storagePath.String)
+			}
+		}
+	}
+
+	for _, path := range pathsToDelete {
+		if err := storage.DeleteFile(ctx, path); err != nil {
+			logger.Logf(ctx, "Warning: failed to delete old booklet file %s: %v", path, err)
+		}
+	}
+
+	for _, id := range idsToDelete {
+		_, err := db.DB.Exec(`DELETE FROM compiled_booklets WHERE id = $1`, id)
+		if err != nil {
+			logger.Logf(ctx, "Warning: failed to delete old booklet row %s: %v", id, err)
+		} else {
+			logger.Logf(ctx, "Cleaned up old booklet session %s", id)
+		}
+	}
+}
+
 func HandleCompileBooklet(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		logger.Logf(r.Context(), "HandleCompileBooklet: method %s not allowed", r.Method)
@@ -902,6 +1028,9 @@ func HandleCompileBooklet(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	// Clean up any old sessions (e.g. failed ones) for the same document and config
+	cleanOldBookletSessions(r.Context(), docID, req, bookletID)
 
 	// Spawn background booklet compiler
 	logger.Logf(r.Context(), "HandleCompileBooklet: starting background compiler task for bookletID=%s", bookletID)

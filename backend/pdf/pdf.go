@@ -438,8 +438,12 @@ func CompileBooklet(ctx context.Context, dbPages []DBPageInfo, config BookletCon
 	// Configure paper size
 	var sheetWidth, sheetHeight float64
 	if strings.ToLower(config.PaperSize) == "letter" {
-		// Letter Landscape: 792.00 x 612.00
+		// Letter Landscape: 8.5 x 11 in
 		sheetWidth = 792.00
+		sheetHeight = 612.00
+	} else if strings.ToLower(config.PaperSize) == "folio" {
+		// Folio Landscape: 8.5 x 13 in
+		sheetWidth = 936.00
 		sheetHeight = 612.00
 	} else {
 		// Default A4 Landscape: 841.89 x 595.28
@@ -660,6 +664,10 @@ func CompileBookletSlice(ctx context.Context, dbPages []DBPageInfo, config Bookl
 	var sheetWidth, sheetHeight float64
 	if strings.ToLower(config.PaperSize) == "letter" {
 		sheetWidth = 792.00
+		sheetHeight = 612.00
+	} else if strings.ToLower(config.PaperSize) == "folio" {
+		// Folio Landscape: 8.5 x 13 in
+		sheetWidth = 936.00
 		sheetHeight = 612.00
 	} else {
 		sheetWidth = 841.89
