@@ -50,3 +50,36 @@ func TestHandleCleanStaleProcesses_InvalidMethod(t *testing.T) {
 		t.Errorf("Expected status 405 Method Not Allowed, got %d", resp.StatusCode)
 	}
 }
+
+func TestHandleSMTPConfig_Unauthorized(t *testing.T) {
+	os.Setenv("ADMIN_API_KEY", "super-secret-key")
+	defer os.Unsetenv("ADMIN_API_KEY")
+
+	// Test GET
+	req := httptest.NewRequest("GET", "/api/admin/settings/smtp", nil)
+	w := httptest.NewRecorder()
+	HandleSMTPConfig(w, req)
+	if w.Result().StatusCode != http.StatusUnauthorized {
+		t.Errorf("Expected GET status 401, got %d", w.Result().StatusCode)
+	}
+
+	// Test POST
+	req = httptest.NewRequest("POST", "/api/admin/settings/smtp", nil)
+	w = httptest.NewRecorder()
+	HandleSMTPConfig(w, req)
+	if w.Result().StatusCode != http.StatusUnauthorized {
+		t.Errorf("Expected POST status 401, got %d", w.Result().StatusCode)
+	}
+}
+
+func TestHandleTestSMTP_Unauthorized(t *testing.T) {
+	os.Setenv("ADMIN_API_KEY", "super-secret-key")
+	defer os.Unsetenv("ADMIN_API_KEY")
+
+	req := httptest.NewRequest("POST", "/api/admin/settings/smtp/test", nil)
+	w := httptest.NewRecorder()
+	HandleTestSMTP(w, req)
+	if w.Result().StatusCode != http.StatusUnauthorized {
+		t.Errorf("Expected status 401, got %d", w.Result().StatusCode)
+	}
+}

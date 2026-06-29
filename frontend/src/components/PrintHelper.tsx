@@ -1,4 +1,4 @@
-import React, { useState } from "react"
+import React, { useState, useEffect } from "react"
 import { api } from "../api"
 import { PDFPageRenderer } from "./PDFPageRenderer"
 import { Button } from "./ui/button"
@@ -6,6 +6,7 @@ import { Card } from "./ui/card"
 import { Label } from "./ui/label"
 import { ScrollArea } from "./ui/scroll-area"
 import { Select } from "./ui/select"
+import { Input } from "./ui/input"
 import {
   Printer,
   RotateCw,
@@ -16,7 +17,8 @@ import {
   RefreshCw,
   Eye,
   BookOpen,
-  Download
+  Download,
+  Mail
 } from "lucide-react"
 
 interface PrintHelperProps {
@@ -33,6 +35,20 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, documentId,
   const [completedBatches, setCompletedBatches] = useState<Record<number, boolean>>({})
   const [selectedSheet, setSelectedSheet] = useState<number>(1)
   const [previewSide, setPreviewSide] = useState<"front" | "back">("front")
+
+  const [showEmailModal, setShowEmailModal] = useState(false)
+  const [recipientEmail, setRecipientEmail] = useState("")
+  const [emailLoading, setEmailLoading] = useState(false)
+  const [emailStatus, setEmailStatus] = useState<{ type: "success" | "error"; text: string } | null>(null)
+
+  // Load current user's email for pre-fill
+  useEffect(() => {
+    api.getMe().then((status) => {
+      if (status.authenticated && status.user?.email) {
+        setRecipientEmail(status.user.email)
+      }
+    }).catch(() => {})
+  }, [])
 
   // Total sheets in booklet is Ceil(totalPages / 4).
   // Target pages is Ceil(totalPages / 4) * 4.
@@ -113,9 +129,20 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, documentId,
             Booklet ID: <code className="text-primary font-mono text-[11px]">{bookletId.slice(0, 8)}</code> &bull; Signature size: {signatureSize}
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={onBack} className="self-start sm:self-auto text-xs">
-          Back to Dashboard
-        </Button>
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowEmailModal(true)}
+            className="text-xs border-primary/20 hover:border-primary/40 text-primary bg-primary/5 hover:bg-primary/10 flex items-center gap-1.5 font-bold"
+          >
+            <Mail className="h-3.5 w-3.5" />
+            Email Booklet
+          </Button>
+          <Button variant="outline" size="sm" onClick={onBack} className="text-xs">
+            Back to Dashboard
+          </Button>
+        </div>
       </div>
 
       {/* Stats Row */}
@@ -351,6 +378,99 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, documentId,
           </div>
         </div>
       </div>
+      
+      {/* Email Booklet Modal */}
+      {showEmailModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={() => setShowEmailModal(false)}>
+          <div 
+            className="bg-card border border-border rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 animate-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-border/40 pb-2">
+              <h3 className="text-base font-bold text-foreground flex items-center gap-2 m-0">
+                <Mail className="h-5 w-5 text-primary" />
+                Email Booklet PDF
+              </h3>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={() => {
+                  setShowEmailModal(false)
+                  setEmailStatus(null)
+                }}
+                className="h-7 w-7 p-0 rounded-full"
+              >
+                &times;
+              </Button>
+            </div>
+            
+            <p className="text-xs text-muted-foreground leading-relaxed m-0">
+              Send the compiled PDF booklet as an email attachment. This will use the system-wide SMTP settings.
+            </p>
+
+            {emailStatus && (
+              <div className={`p-3 rounded-lg border text-xs font-medium ${
+                emailStatus.type === "success" 
+                  ? "bg-green-500/10 border-green-500/30 text-green-400" 
+                  : "bg-destructive/10 border-destructive/30 text-destructive"
+              }`}>
+                {emailStatus.text}
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <Label htmlFor="email-recipient" className="text-xs font-bold text-muted-foreground">Recipient Email Address</Label>
+              <Input
+                id="email-recipient"
+                type="email"
+                placeholder="recipient@example.com"
+                value={recipientEmail}
+                onChange={(e) => setRecipientEmail(e.target.value)}
+                className="bg-background/50 border-border focus-visible:ring-primary w-full h-9"
+                disabled={emailLoading}
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-border/20">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => {
+                  setShowEmailModal(false)
+                  setEmailStatus(null)
+                }}
+                disabled={emailLoading}
+                className="text-xs"
+              >
+                Cancel
+              </Button>
+              <Button 
+                size="sm" 
+                onClick={async () => {
+                  if (!recipientEmail) {
+                    setEmailStatus({ type: "error", text: "Recipient email is required." })
+                    return
+                  }
+                  setEmailLoading(true)
+                  setEmailStatus(null)
+                  try {
+                    const result = await api.emailBooklet(bookletId, recipientEmail)
+                    setEmailStatus({ type: "success", text: result.message || "Booklet emailed successfully!" })
+                  } catch (err: any) {
+                    setEmailStatus({ type: "error", text: err.message || "Failed to email booklet." })
+                  } finally {
+                    setEmailLoading(false)
+                  }
+                }}
+                disabled={emailLoading}
+                className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-xs"
+              >
+                {emailLoading ? "Sending..." : "Send Email"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

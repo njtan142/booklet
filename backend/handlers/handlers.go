@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -24,6 +25,7 @@ import (
 	"booklet/logger"
 	"booklet/metrics"
 	"booklet/pdf"
+	"booklet/smtp"
 	"booklet/storage"
 
 	"github.com/google/uuid"
@@ -1795,5 +1797,302 @@ func HandleCleanStaleProcesses(w http.ResponseWriter, r *http.Request) {
 		"status":  "success",
 		"message": "Stale background processes cleaned up successfully",
 	})
+}
+
+// HandleGetSMTPConfig retrieves the system-wide SMTP settings.
+// Requires X-API-Key auth.
+func HandleGetSMTPConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	adminKey := os.Getenv("ADMIN_API_KEY")
+	if adminKey == "" {
+		adminKey = "dev-admin-key"
+	}
+
+	reqKey := r.Header.Get("X-API-Key")
+	if reqKey == "" {
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			reqKey = strings.TrimPrefix(authHeader, "Bearer ")
+		}
+	}
+
+	if reqKey != adminKey {
+		logger.Logf(r.Context(), "HandleGetSMTPConfig: unauthorized access attempt")
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	cfg, err := smtp.GetSMTPConfig(r.Context())
+	if err != nil {
+		logger.Logf(r.Context(), "Error: failed to fetch SMTP config: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Mask the password for security
+	if cfg.Password != "" {
+		cfg.Password = "********"
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(cfg)
+}
+
+// HandleSaveSMTPConfig saves the system-wide SMTP settings.
+// Requires X-API-Key auth.
+func HandleSaveSMTPConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	adminKey := os.Getenv("ADMIN_API_KEY")
+	if adminKey == "" {
+		adminKey = "dev-admin-key"
+	}
+
+	reqKey := r.Header.Get("X-API-Key")
+	if reqKey == "" {
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			reqKey = strings.TrimPrefix(authHeader, "Bearer ")
+		}
+	}
+
+	if reqKey != adminKey {
+		logger.Logf(r.Context(), "HandleSaveSMTPConfig: unauthorized access attempt")
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var cfg smtp.SMTPConfig
+	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+		logger.Logf(r.Context(), "Error: failed to decode SMTP config: %v", err)
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Basic validation
+	if cfg.Host == "" {
+		http.Error(w, "SMTP host is required", http.StatusBadRequest)
+		return
+	}
+	if cfg.Port <= 0 {
+		http.Error(w, "SMTP port must be a positive integer", http.StatusBadRequest)
+		return
+	}
+	if cfg.FromEmail == "" {
+		http.Error(w, "Sender email is required", http.StatusBadRequest)
+		return
+	}
+
+	if err := smtp.SaveSMTPConfig(r.Context(), cfg); err != nil {
+		logger.Logf(r.Context(), "Error: failed to save SMTP config: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":  "success",
+		"message": "SMTP configuration saved successfully",
+	})
+}
+
+// HandleTestSMTP sends a test email to verify SMTP configuration.
+// Requires X-API-Key auth.
+func HandleTestSMTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	adminKey := os.Getenv("ADMIN_API_KEY")
+	if adminKey == "" {
+		adminKey = "dev-admin-key"
+	}
+
+	reqKey := r.Header.Get("X-API-Key")
+	if reqKey == "" {
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			reqKey = strings.TrimPrefix(authHeader, "Bearer ")
+		}
+	}
+
+	if reqKey != adminKey {
+		logger.Logf(r.Context(), "HandleTestSMTP: unauthorized access attempt")
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	type TestSMTPRequest struct {
+		Config smtp.SMTPConfig `json:"config"`
+		To     string          `json:"to"`
+	}
+
+	var req TestSMTPRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		logger.Logf(r.Context(), "Error: failed to decode test SMTP request: %v", err)
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.To == "" {
+		http.Error(w, "recipient email 'to' is required", http.StatusBadRequest)
+		return
+	}
+
+	// If password is masked, retrieve existing database password
+	if req.Config.Password == "********" {
+		saved, err := smtp.GetSMTPConfig(r.Context())
+		if err == nil && saved.IsConfigured() {
+			req.Config.Password = saved.Password
+		}
+	}
+
+	subject := "Booklet Studio SMTP Connection Test"
+	htmlBody := fmt.Sprintf(`
+		<h3>SMTP Connection Test</h3>
+		<p>This is a test email from Booklet Studio to verify your system-wide SMTP settings.</p>
+		<p>If you are reading this message, your SMTP configurations are correct!</p>
+		<hr/>
+		<p>Timestamp: %s</p>
+	`, time.Now().Format(time.RFC1123))
+
+	err := smtp.SendEmail(r.Context(), req.Config, req.To, subject, htmlBody, "", nil)
+	if err != nil {
+		logger.Logf(r.Context(), "Error: SMTP test email delivery failed: %v", err)
+		http.Error(w, fmt.Sprintf("SMTP test failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":  "success",
+		"message": "Test email successfully sent to " + req.To,
+	})
+}
+
+// HandleEmailBooklet downloads a booklet PDF and sends it as an email attachment.
+// Requires standard OIDC/mock user auth.
+func HandleEmailBooklet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	bookletID := r.PathValue("id")
+	if _, err := uuid.Parse(bookletID); err != nil {
+		logger.Logf(r.Context(), "HandleEmailBooklet: invalid UUID format: %s", bookletID)
+		http.Error(w, "invalid UUID format", http.StatusBadRequest)
+		return
+	}
+
+	type EmailRequest struct {
+		Email string `json:"email"`
+	}
+
+	var req EmailRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		logger.Logf(r.Context(), "Error: failed to decode email request: %v", err)
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Email == "" {
+		http.Error(w, "recipient email is required", http.StatusBadRequest)
+		return
+	}
+
+	// Check if SMTP is configured
+	smtpCfg, err := smtp.GetSMTPConfig(r.Context())
+	if err != nil || !smtpCfg.IsConfigured() {
+		logger.Logf(r.Context(), "HandleEmailBooklet: SMTP not configured or error: %v", err)
+		http.Error(w, "SMTP server is not configured by the administrator", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Fetch booklet and original document name
+	var status, storagePath, docName string
+	err = db.DB.QueryRowContext(r.Context(), `
+		SELECT cb.status, cb.storage_path, d.name
+		FROM compiled_booklets cb
+		JOIN documents d ON cb.document_id = d.id
+		WHERE cb.id = $1
+	`, bookletID).Scan(&status, &storagePath, &docName)
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "booklet not found", http.StatusNotFound)
+			return
+		}
+		logger.Logf(r.Context(), "Error: failed to fetch booklet metadata: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if status != "ready" || storagePath == "" {
+		http.Error(w, "booklet is not compiled or compilation failed", http.StatusBadRequest)
+		return
+	}
+
+	// Fetch PDF from MinIO
+	object, err := storage.MinioClient.GetObject(r.Context(), storage.BucketName, storagePath, minio.GetObjectOptions{})
+	if err != nil {
+		logger.Logf(r.Context(), "Error: failed to get booklet PDF from MinIO: %v", err)
+		http.Error(w, fmt.Sprintf("failed to retrieve PDF from storage: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer object.Close()
+
+	pdfBytes, err := io.ReadAll(object)
+	if err != nil {
+		logger.Logf(r.Context(), "Error: failed to read PDF data: %v", err)
+		http.Error(w, fmt.Sprintf("failed to read booklet data: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Compose Email
+	attachmentName := fmt.Sprintf("%s_booklet.pdf", strings.ReplaceAll(docName, " ", "_"))
+	subject := fmt.Sprintf("Your Booklet PDF: %s", docName)
+	htmlBody := fmt.Sprintf(`
+		<h3>Your Booklet is Ready!</h3>
+		<p>Hi there,</p>
+		<p>Please find attached the compiled PDF booklet for <strong>%s</strong> from Booklet Studio.</p>
+		<p>Best regards,<br/>Booklet Studio Team</p>
+	`, docName)
+
+	err = smtp.SendEmail(r.Context(), smtpCfg, req.Email, subject, htmlBody, attachmentName, pdfBytes)
+	if err != nil {
+		logger.Logf(r.Context(), "Error: booklet email dispatch failed: %v", err)
+		http.Error(w, fmt.Sprintf("failed to send booklet email: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":  "success",
+		"message": "Booklet PDF successfully emailed to " + req.Email,
+	})
+}
+
+// HandleSMTPConfig handles both GET (retrieve) and POST (save) system-wide SMTP settings.
+func HandleSMTPConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		HandleGetSMTPConfig(w, r)
+	} else if r.Method == http.MethodPost {
+		HandleSaveSMTPConfig(w, r)
+	} else {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 

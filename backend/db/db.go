@@ -162,6 +162,25 @@ func runMigrations() error {
 		return err
 	}
 
+	// 5. SMTP Config Table
+	log.Println("Creating smtp_config table...")
+	_, err = DB.Exec(`
+		CREATE TABLE IF NOT EXISTS smtp_config (
+			id TEXT PRIMARY KEY DEFAULT 'global',
+			host TEXT NOT NULL,
+			port INT NOT NULL,
+			username TEXT NOT NULL,
+			password TEXT NOT NULL,
+			encryption TEXT NOT NULL,
+			from_email TEXT NOT NULL,
+			from_name TEXT,
+			updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+		);
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create smtp_config table: %w", err)
+	}
+
 	log.Println("Database migrations applied successfully.")
 	return nil
 }

@@ -83,6 +83,11 @@ func main() {
 
 	// Administrative routes (requires API key authentication, OIDC not required)
 	mux.Handle("/api/admin/clean-stale-processes", handlers.InstrumentHandler("/api/admin/clean-stale-processes", handlers.HandleCleanStaleProcesses))
+	mux.Handle("/api/admin/settings/smtp", handlers.InstrumentHandler("/api/admin/settings/smtp", handlers.HandleSMTPConfig))
+	mux.Handle("/api/admin/settings/smtp/test", handlers.InstrumentHandler("/api/admin/settings/smtp/test", handlers.HandleTestSMTP))
+
+	// Booklet Email route (requires user authentication)
+	mux.Handle("/api/booklets/{id}/email", auth.RequireAuth(handlers.InstrumentHandler("/api/booklets/{id}/email", handlers.HandleEmailBooklet)))
 
 	// Prometheus Metrics endpoint
 	mux.Handle("/metrics", promhttp.Handler())

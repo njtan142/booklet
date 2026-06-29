@@ -189,4 +189,39 @@ export const api = {
   getSearchPreviewUrl: (docId: string, query: string) => {
     return `${API_BASE}/documents/${docId}/search-preview?q=${encodeURIComponent(query)}`;
   },
+  
+  // SMTP Configurations
+  getSMTPConfig: (adminApiKey: string) => apiFetch<{
+    host: string;
+    port: number;
+    username: string;
+    encryption: string;
+    from_email: string;
+    from_name: string;
+  }>("/admin/settings/smtp", {
+    headers: {
+      "X-API-Key": adminApiKey,
+    },
+  }),
+
+  saveSMTPConfig: (adminApiKey: string, config: any) => apiFetch<{ status: string; message: string }>("/admin/settings/smtp", {
+    method: "POST",
+    headers: {
+      "X-API-Key": adminApiKey,
+    },
+    body: JSON.stringify(config),
+  }),
+
+  testSMTPConfig: (adminApiKey: string, config: any, toEmail: string) => apiFetch<{ status: string; message: string }>("/admin/settings/smtp/test", {
+    method: "POST",
+    headers: {
+      "X-API-Key": adminApiKey,
+    },
+    body: JSON.stringify({ config, to: toEmail }),
+  }),
+
+  emailBooklet: (bookletId: string, email: string) => apiFetch<{ status: string; message: string }>(`/booklets/${bookletId}/email`, {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  }),
 };

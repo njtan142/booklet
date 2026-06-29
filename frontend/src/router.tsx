@@ -10,7 +10,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import React, { useEffect, useState } from "react"
 import { api } from "./api"
 import type { AuthStatus } from "./api"
-import { LogOut, BookOpen, Search, User, Sun, Moon, Monitor } from "lucide-react"
+import { LogOut, BookOpen, Search, User, Sun, Moon, Monitor, Settings as SettingsIcon } from "lucide-react"
 import { Card } from "./components/ui/card"
 import { Button } from "./components/ui/button"
 import { useTheme } from "./components/theme-provider"
@@ -18,6 +18,7 @@ import { useTheme } from "./components/theme-provider"
 import { Dashboard } from "./components/Dashboard"
 import { SemanticSearch } from "./components/SemanticSearch"
 import { Login } from "./components/Login"
+import { Settings } from "./components/Settings"
 
 // Create TanStack Query Client
 export const queryClient = new QueryClient({
@@ -96,6 +97,15 @@ const RootLayout: React.FC = () => {
               >
                 <Search className="h-4 w-4" aria-hidden="true" />
                 Semantic Search
+              </Link>
+              <Link
+                to="/settings"
+                activeProps={{ className: "bg-primary/15 text-primary border-primary/30" }}
+                inactiveProps={{ className: "text-muted-foreground hover:text-foreground hover:bg-muted/60 border-transparent" }}
+                className="px-4 py-2 rounded-lg text-sm font-medium border transition-all flex items-center gap-2"
+              >
+                <SettingsIcon className="h-4 w-4" aria-hidden="true" />
+                Settings
               </Link>
             </nav>
 
@@ -201,7 +211,13 @@ export const loginRoute = createRoute({
   component: Login,
 })
 
-const routeTree = rootRoute.addChildren([indexRoute, searchRoute, loginRoute])
+export const settingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/settings",
+  component: Settings,
+})
+
+const routeTree = rootRoute.addChildren([indexRoute, searchRoute, loginRoute, settingsRoute])
 
 export const router = createRouter({ routeTree })
 

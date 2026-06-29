@@ -101,6 +101,14 @@ services:
       - SPLIT_CHUNK_SIZE=100
       - PAGE_PARSING_TIMEOUT_SECONDS=5
       - GODEBUG=madvdontneed=1
+      - ADMIN_API_KEY=dev-admin-key
+      - SMTP_HOST= # Leave empty to disable fallback or specify e.g. smtp.gmail.com
+      - SMTP_PORT=587
+      - SMTP_USERNAME=
+      - SMTP_PASSWORD=
+      - SMTP_ENCRYPTION=starttls # none, ssl, starttls
+      - SMTP_FROM_EMAIL=noreply@booklet.local
+      - SMTP_FROM_NAME=Booklet Studio
     depends_on:
       db:
         condition: service_healthy
