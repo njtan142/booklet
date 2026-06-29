@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
+import { Card } from "./ui/card";
 
 interface PDFPageRendererProps {
   url: string;
@@ -109,9 +110,9 @@ export const PDFPageRenderer: React.FC<PDFPageRendererProps> = ({ url, className
       )}
       {error ? (
         <div className="absolute inset-0 flex items-center justify-center p-4 bg-muted z-10">
-          <div className="p-3 text-[10px] text-destructive text-center font-medium bg-destructive/10 rounded border border-destructive/20 max-w-[85%]">
+          <Card className="p-3 text-[10px] text-destructive text-center font-medium bg-destructive/10 border-destructive/20 max-w-[85%] shadow-none">
             {error}
-          </div>
+          </Card>
         </div>
       ) : null}
       <canvas ref={canvasRef} className="w-full h-full object-contain select-none max-h-full" />

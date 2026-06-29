@@ -7,6 +7,9 @@ import { Input } from "./ui/input"
 import { Select } from "./ui/select"
 import { Label } from "./ui/label"
 import { ScrollArea } from "./ui/scroll-area"
+import { Card } from "./ui/card"
+import { Slider } from "./ui/slider"
+import { Checkbox } from "./ui/checkbox"
 import { PrintHelper } from "./PrintHelper"
 import { PDFPageRenderer } from "./PDFPageRenderer"
 import {
@@ -163,6 +166,16 @@ export const Dashboard: React.FC = () => {
       const document = documents.find((item) => item.id === pending.documentId)
 
       if (!document) {
+        // If the document has not yet been registered in the system and has exceeded the timeout, mark it as failed
+        if (now - pending.startedAt > UPLOAD_FAILURE_TIMEOUT_MS) {
+          resolvedFailures.push({
+            id: `timeout-${pending.documentId}`,
+            documentId: pending.documentId,
+            fileName: pending.fileName,
+            message: "Upload failed to register on the server.",
+          })
+          return false
+        }
         return true
       }
 
@@ -263,6 +276,31 @@ export const Dashboard: React.FC = () => {
     }
   }
 
+  // Document Resume Mutation
+  const resumeMutation = useMutation({
+    mutationFn: (docId: string) => api.resumeDocument(docId),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["documents"] })
+      setPendingUploads((current) => {
+        if (current.some((x) => x.documentId === data.document_id)) {
+          return current
+        }
+        return [
+          ...current,
+          {
+            id: `resume-${data.document_id}`,
+            documentId: data.document_id,
+            fileName: "Resumed PDF Document",
+            startedAt: Date.now(),
+          },
+        ]
+      })
+    },
+    onError: (err: any) => {
+      alert(`Failed to resume document processing: ${err.message}`)
+    }
+  })
+
   // 4. Booklet Compile Mutation
   const compileMutation = useMutation({
     mutationFn: (docId: string) => api.compileBooklet(docId, {
@@ -276,6 +314,16 @@ export const Dashboard: React.FC = () => {
       setPollingBookletId(data.booklet_id)
       setCompiling(true)
       setCompileStatus("Arranging pages & generating canvas...")
+      
+      // Asynchronously trigger cleanup of old booklet sessions with this configuration
+      api.cleanupBookletSessions(selectedDocId!, {
+        margin,
+        gutter,
+        paper_size: paperSize,
+        signature_size: signatureSize,
+        guides,
+        current_booklet_id: data.booklet_id,
+      }).catch(err => console.warn("Failed to clean up old booklet sessions:", err))
     },
     onError: (err: any) => {
       setCompileStatus(`Compilation failed: ${err.message}`)
@@ -413,9 +461,9 @@ export const Dashboard: React.FC = () => {
                         className="w-full text-left h-auto p-3.5 rounded-xl border flex items-center justify-between gap-4 bg-destructive/10 border-destructive/25"
                       >
                         <div className="flex items-center gap-3 min-w-0">
-                          <div className="p-2 rounded-lg bg-destructive/15 text-destructive">
+                          <Card className="p-2 rounded-lg bg-destructive/15 text-destructive border-none shadow-none">
                             <FileText className="h-4 w-4" aria-hidden="true" />
-                          </div>
+                          </Card>
                           <div className="min-w-0">
                             <h4 className="text-xs font-bold text-foreground truncate m-0">{doc.name}</h4>
                             <p className="text-[10px] text-destructive/80 mt-0.5">
@@ -424,15 +472,26 @@ export const Dashboard: React.FC = () => {
                           </div>
                         </div>
 
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="shrink-0 text-destructive hover:text-destructive hover:bg-destructive/15"
-                          onClick={() => dismissFailedUpload(failedUpload?.id ?? `doc-${doc.id}`)}
-                        >
-                          Dismiss
-                        </Button>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 text-[11px]"
+                            onClick={() => resumeMutation.mutate(doc.id)}
+                          >
+                            Resume
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 text-[11px] text-destructive hover:text-destructive hover:bg-destructive/15"
+                            onClick={() => dismissFailedUpload(failedUpload?.id ?? `doc-${doc.id}`)}
+                          >
+                            Dismiss
+                          </Button>
+                        </div>
                       </div>
                     )
                   }
@@ -506,9 +565,9 @@ export const Dashboard: React.FC = () => {
                     className="w-full text-left h-auto p-3.5 rounded-xl border flex items-center justify-between gap-4 cursor-pointer transition-all whitespace-normal bg-background/60 border-border hover:border-primary/25"
                   >
                     <div className="flex items-center gap-3 min-w-0">
-                      <div className="p-2 rounded-lg bg-muted text-muted-foreground">
+                      <Card className="p-2 rounded-lg bg-muted text-muted-foreground border-none shadow-none">
                         <Printer className="h-4 w-4" aria-hidden="true" />
-                      </div>
+                      </Card>
                       <div className="min-w-0">
                         <h4 className="text-xs font-bold text-foreground truncate m-0">{session.document_name}</h4>
                         <p className="text-[10px] text-muted-foreground mt-0.5">
@@ -550,61 +609,61 @@ export const Dashboard: React.FC = () => {
                   <h3 className="text-sm font-bold text-foreground m-0">Booklet Imposition Config</h3>
                 </div>
                 <div className="flex bg-muted p-0.5 rounded border border-border text-[9px] font-bold">
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
                     onClick={() => setDashboardPreviewSide("front")}
-                    className={`px-1.5 py-0.5 rounded transition-all ${dashboardPreviewSide === "front" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                    className={`px-1.5 py-0.5 h-6 rounded text-[9px] font-bold transition-all ${dashboardPreviewSide === "front" ? "bg-background text-foreground shadow-sm hover:bg-background" : "text-muted-foreground hover:text-foreground hover:bg-transparent"
                       }`}
                   >
                     Front Side
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
+                    variant="ghost"
                     onClick={() => setDashboardPreviewSide("back")}
-                    className={`px-1.5 py-0.5 rounded transition-all ${dashboardPreviewSide === "back" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                    className={`px-1.5 py-0.5 h-6 rounded text-[9px] font-bold transition-all ${dashboardPreviewSide === "back" ? "bg-background text-foreground shadow-sm hover:bg-background" : "text-muted-foreground hover:text-foreground hover:bg-transparent"
                       }`}
                   >
                     Back Side
-                  </button>
+                  </Button>
                 </div>
               </div>
 
               {/* Mock Sheet Container - LOOKS LIKE PAPER: no corner radius, drop shadow. MOVED TO TOP */}
-              <div className="relative aspect-[1.5/1] w-full bg-white border border-neutral-300 shadow-[0_6px_16px_rgba(0,0,0,0.12)] flex items-center justify-center overflow-hidden">
+              <Card className="relative aspect-[1.5/1] w-full bg-white border border-neutral-300 shadow-[0_6px_16px_rgba(0,0,0,0.12)] flex items-center justify-center overflow-hidden rounded-none">
                 <PDFPageRenderer
                   url={api.getBookletPreviewUrl(selectedDocId!, margin, gutter, paperSize, signatureSize, guides, dashboardPreviewSide)}
                   className="w-full h-full"
                   rotation={0}
                 />
-              </div>
+              </Card>
 
               {/* Compact Spacing Sliders and dropdowns inline on a single row */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
                 <div className="space-y-1">
                   <Label htmlFor="margin-input" className="text-[10px] font-semibold text-muted-foreground uppercase">Margins: <span className="text-foreground font-bold">{margin}pt</span></Label>
-                  <input
+                  <Slider
                     id="margin-input"
-                    type="range"
-                    min="0"
-                    max="72"
-                    step="1"
-                    value={margin}
-                    onChange={(e) => setMargin(parseFloat(e.target.value) || 0)}
-                    className="w-full h-1 bg-muted rounded appearance-none cursor-pointer accent-primary"
+                    min={0}
+                    max={72}
+                    step={1}
+                    value={[margin]}
+                    onValueChange={(val) => setMargin(val[0])}
+                    className="w-full pt-1.5 cursor-pointer"
                   />
                 </div>
 
                 <div className="space-y-1">
                   <Label htmlFor="gutter-input" className="text-[10px] font-semibold text-muted-foreground uppercase">Gutter: <span className="text-foreground font-bold">{gutter}pt</span></Label>
-                  <input
+                  <Slider
                     id="gutter-input"
-                    type="range"
-                    min="0"
-                    max="100"
-                    step="1"
-                    value={gutter}
-                    onChange={(e) => setGutter(parseFloat(e.target.value) || 0)}
-                    className="w-full h-1 bg-muted rounded appearance-none cursor-pointer accent-primary"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={[gutter]}
+                    onValueChange={(val) => setGutter(val[0])}
+                    className="w-full pt-1.5 cursor-pointer"
                   />
                 </div>
 
@@ -631,12 +690,10 @@ export const Dashboard: React.FC = () => {
               {/* Bottom Row: Checkbox and Compile Button inline */}
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-2 border-t border-border/30">
                 <div className="flex items-center gap-2">
-                  <input
+                  <Checkbox
                     id="guides-checkbox"
-                    type="checkbox"
                     checked={guides}
-                    onChange={(e) => setGuides(e.target.checked)}
-                    className="h-3.5 w-3.5 rounded border-border text-primary focus:ring-primary bg-background cursor-pointer"
+                    onCheckedChange={(checked) => setGuides(checked === true)}
                   />
                   <Label htmlFor="guides-checkbox" className="text-xs font-semibold text-foreground cursor-pointer">
                     Draw Folding &amp; Cutting Guides

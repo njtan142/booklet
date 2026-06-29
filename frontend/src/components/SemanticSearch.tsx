@@ -6,6 +6,8 @@ import { Button } from "./ui/button"
 import { Input } from "./ui/input"
 import { Select } from "./ui/select"
 import { Form, FormField, FormItem, FormControl } from "./ui/form"
+import { ScrollArea } from "./ui/scroll-area"
+import { Card } from "./ui/card"
 import { Search, Loader2, Sparkles, FileText, ChevronRight } from "lucide-react"
 
 interface GroupedDoc {
@@ -161,41 +163,45 @@ export const SemanticSearch: React.FC = () => {
             
             <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
               {/* Sidebar: Grouped Books List */}
-              <div className="col-span-12 md:col-span-4 space-y-3 max-h-[600px] overflow-y-auto pr-2">
-                {groupedDocs.map((doc) => (
-                  <button
-                    key={doc.id}
-                    onClick={() => setSelectedDocId(doc.id)}
-                    className={`w-full text-left p-4 rounded-xl border transition-all flex flex-col ${
-                      selectedDocId === doc.id
-                        ? "bg-primary/10 border-primary shadow-sm"
-                        : "bg-background/40 border-border hover:border-primary/20 hover:bg-background/60"
-                    }`}
-                  >
-                    <div className="flex items-start gap-2.5">
-                      <FileText className="h-4.5 w-4.5 text-muted-foreground mt-0.5 flex-shrink-0" />
-                      <div className="min-w-0">
-                        <span className="font-bold text-xs text-foreground block truncate">{doc.name}</span>
-                        <span className="text-[10px] text-muted-foreground block mt-0.5">{doc.matches.length} matching pages</span>
+              <ScrollArea className="col-span-12 md:col-span-4 h-[600px] pr-2">
+                <div className="space-y-3">
+                  {groupedDocs.map((doc) => (
+                    <Button
+                      type="button"
+                      key={doc.id}
+                      onClick={() => setSelectedDocId(doc.id)}
+                      variant="ghost"
+                      className={`w-full text-left p-4 h-auto rounded-xl border transition-all flex flex-col items-stretch whitespace-normal ${
+                        selectedDocId === doc.id
+                          ? "bg-primary/10 border-primary shadow-sm hover:bg-primary/10"
+                          : "bg-background/40 border-border hover:border-primary/20 hover:bg-background/60"
+                      }`}
+                    >
+                      <div className="flex items-start gap-2.5">
+                        <FileText className="h-4.5 w-4.5 text-muted-foreground mt-0.5 flex-shrink-0" />
+                        <div className="min-w-0">
+                          <span className="font-bold text-xs text-foreground block truncate">{doc.name}</span>
+                          <span className="text-[10px] text-muted-foreground block mt-0.5">{doc.matches.length} matching pages</span>
+                        </div>
                       </div>
-                    </div>
 
-                    {/* Expandable Snippets under selected book */}
-                    {selectedDocId === doc.id && (
-                      <div className="mt-3.5 space-y-2 pt-3.5 border-t border-primary/20 w-full">
-                        {doc.matches.map((m, i) => (
-                          <div key={i} className="text-[11px] bg-background/60 p-2.5 rounded-lg border border-border/60 hover:border-primary/30 transition-colors">
-                            <span className="text-primary font-bold">Page {m.page_number}</span>
-                            <p className="text-foreground/80 leading-relaxed italic mt-1 font-serif">
-                              {highlightText(m.text_snippet, triggerQuery)}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </button>
-                ))}
-              </div>
+                      {/* Expandable Snippets under selected book */}
+                      {selectedDocId === doc.id && (
+                        <div className="mt-3.5 space-y-2 pt-3.5 border-t border-primary/20 w-full text-left">
+                          {doc.matches.map((m, i) => (
+                            <Card key={i} className="text-[11px] bg-background/60 p-2.5 rounded-lg border border-border/60 hover:border-primary/30 transition-colors shadow-none">
+                              <span className="text-primary font-bold">Page {m.page_number}</span>
+                              <p className="text-foreground/80 leading-relaxed italic mt-1 font-serif">
+                                {highlightText(m.text_snippet, triggerQuery)}
+                              </p>
+                            </Card>
+                          ))}
+                        </div>
+                      )}
+                    </Button>
+                  ))}
+                </div>
+              </ScrollArea>
 
               {/* Preview Pane: Merged PDF inside Iframe */}
               <div className="col-span-12 md:col-span-8 h-[600px] bg-background/40 border border-border rounded-2xl overflow-hidden glass flex flex-col">

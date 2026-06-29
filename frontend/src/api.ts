@@ -140,6 +140,25 @@ export const api = {
     body: JSON.stringify(config),
   }),
   
+  resumeDocument: (id: string) => apiFetch<{ message: string; document_id: string }>(`/documents/${id}/resume`, {
+    method: "POST",
+  }),
+
+  cleanupBookletSessions: (
+    docId: string,
+    config: {
+      margin: number;
+      gutter: number;
+      paper_size: string;
+      signature_size: number;
+      guides: boolean;
+      current_booklet_id: string;
+    }
+  ) => apiFetch<{ message: string }>(`/documents/${docId}/booklet/cleanup`, {
+    method: "POST",
+    body: JSON.stringify(config),
+  }),
+  
   getBooklet: (id: string) => apiFetch<BookletInfo>(`/booklets/${id}`),
   
   getDownloadUrl: (bookletId: string, filter?: string, sheets?: string, pages?: string) => {

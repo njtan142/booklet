@@ -5,6 +5,7 @@ import { Button } from "./ui/button"
 import { Card } from "./ui/card"
 import { Label } from "./ui/label"
 import { ScrollArea } from "./ui/scroll-area"
+import { Select } from "./ui/select"
 import {
   Printer,
   RotateCw,
@@ -152,21 +153,21 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, documentId,
                 <h3 className="text-sm font-bold text-foreground">Print Batches</h3>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-muted-foreground text-[11px]">Batch size:</span>
-                <select
+                <span className="text-muted-foreground text-[11px] shrink-0">Batch size:</span>
+                <Select
                   value={batchSize}
                   onChange={(e) => {
                     setBatchSize(parseInt(e.target.value))
                     setCompletedBatches({})
                     setSelectedSheet(1)
                   }}
-                  className="bg-background border border-border rounded px-1.5 py-0.5 text-xs font-semibold text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="h-7 text-xs py-0 pr-8 w-28"
                 >
                   <option value={5}>5 Sheets</option>
                   <option value={10}>10 Sheets</option>
                   <option value={20}>20 Sheets</option>
                   <option value={totalSheets}>All ({totalSheets})</option>
-                </select>
+                </Select>
               </div>
             </div>
 
@@ -199,19 +200,18 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, documentId,
                               const sNum = batch.startSheet + idx
                               const isSelected = selectedSheet === sNum
                               return (
-                                <button
+                                <Button
+                                  type="button"
                                   key={sNum}
                                   onClick={(e) => {
                                     e.stopPropagation()
                                     setSelectedSheet(sNum)
                                   }}
-                                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold border transition-colors ${isSelected
-                                    ? "bg-primary text-primary-foreground border-primary"
-                                    : "bg-background/80 hover:bg-muted border-border text-muted-foreground"
-                                    }`}
+                                  variant={isSelected ? "default" : "outline"}
+                                  className="h-5 px-1.5 py-0 text-[10px] font-bold"
                                 >
                                   {sNum}
-                                </button>
+                                </Button>
                               )
                             })}
                           </div>
@@ -288,24 +288,28 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, documentId,
                 <h3 className="text-sm font-bold text-foreground">Sheet {selectedSheet} Preview</h3>
               </div>
               <div className="flex bg-muted p-0.5 rounded border border-border text-[9px] font-bold">
-                <button
+                <Button
+                  type="button"
                   onClick={() => setPreviewSide("front")}
-                  className={`text-[10px] font-bold px-2 py-1 rounded-md transition-all ${previewSide === "front"
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
+                  variant="ghost"
+                  className={`text-[10px] font-bold px-2 py-1 h-7 rounded-md transition-all ${previewSide === "front"
+                    ? "bg-background text-foreground shadow-sm hover:bg-background"
+                    : "text-muted-foreground hover:text-foreground hover:bg-transparent"
                     }`}
                 >
                   Front (Odds)
-                </button>
-                <button
+                </Button>
+                <Button
+                  type="button"
                   onClick={() => setPreviewSide("back")}
-                  className={`text-[10px] font-bold px-2 py-1 rounded-md transition-all ${previewSide === "back"
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
+                  variant="ghost"
+                  className={`text-[10px] font-bold px-2 py-1 h-7 rounded-md transition-all ${previewSide === "back"
+                    ? "bg-background text-foreground shadow-sm hover:bg-background"
+                    : "text-muted-foreground hover:text-foreground hover:bg-transparent"
                     }`}
                 >
                   Back (Evens)
-                </button>
+                </Button>
               </div>
             </div>
 
