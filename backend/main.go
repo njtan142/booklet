@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"booklet/handlers"
 	"booklet/logger"
 	"booklet/metrics"
+	"booklet/smtp"
 	"booklet/storage"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -40,10 +42,23 @@ func main() {
 	// 4. Initialize Auth & OIDC
 	auth.InitAuth()
 
-	// 5. Register Prometheus Metrics
+	// 5. Log SMTP Configuration Status
+	smtpCtx, smtpCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	if smtpCfg, err := smtp.GetSMTPConfig(smtpCtx); err == nil {
+		if smtpCfg.IsConfigured() {
+			log.Printf("SMTP service initialized: host=%s:%d, encryption=%s, sender=%s", smtpCfg.Host, smtpCfg.Port, smtpCfg.Encryption, smtpCfg.FromEmail)
+		} else {
+			log.Println("SMTP service is not configured. User email notifications will be disabled.")
+		}
+	} else {
+		log.Printf("Warning: Failed to retrieve SMTP config on startup: %v", err)
+	}
+	smtpCancel()
+
+	// 6. Register Prometheus Metrics
 	metrics.RegisterMetrics()
 
-	// 6. Setup ServeMux Router (Standard Go 1.22+ mux)
+	// 7. Setup ServeMux Router (Standard Go 1.22+ mux)
 	mux := http.NewServeMux()
 
 	// Auth routes (unprotected)
