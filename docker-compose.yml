@@ -96,7 +96,7 @@ services:
       - EMBEDDING_DIMENSION=384
       - OLLAMA_HOST=http://ollama:11434
       - FRONTEND_URL=http://localhost
-      - ALLOWED_ORIGINS=http://localhost,http://localhost:5173,http://127.0.0.1,http://127.0.0.1:5173
+      - ALLOWED_ORIGINS=http://localhost,http://localhost:5173,http://localhost:8082,http://127.0.0.1,http://127.0.0.1:5173
       - MAX_PARALLEL_DOCUMENTS=5
       - SPLIT_CHUNK_SIZE=100
       - PAGE_PARSING_TIMEOUT_SECONDS=5
@@ -131,6 +131,18 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+
+  admin:
+    build:
+      context: ./admin
+      dockerfile: Dockerfile
+    container_name: booklet-admin
+    ports:
+      - "8082:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
 
 volumes:
   postgres_data:
