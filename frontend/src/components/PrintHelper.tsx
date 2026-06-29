@@ -14,7 +14,8 @@ import {
   HelpCircle,
   RefreshCw,
   Eye,
-  BookOpen
+  BookOpen,
+  Download
 } from "lucide-react"
 
 interface PrintHelperProps {
