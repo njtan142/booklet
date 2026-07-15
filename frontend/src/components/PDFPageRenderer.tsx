@@ -11,6 +11,8 @@ interface PDFPageRendererProps {
 
 export const PDFPageRenderer: React.FC<PDFPageRendererProps> = ({ url, className, rotation, pageNumber }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const renderTaskRef = useRef<any>(null);
+  const loadingTaskRef = useRef<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,11 +35,27 @@ export const PDFPageRenderer: React.FC<PDFPageRendererProps> = ({ url, className
         // Configure worker
         pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js";
 
+        // Cancel previous tasks before starting a new one
+        if (loadingTaskRef.current) {
+          try {
+            loadingTaskRef.current.destroy();
+          } catch (e) {}
+          loadingTaskRef.current = null;
+        }
+        if (renderTaskRef.current) {
+          try {
+            renderTaskRef.current.cancel();
+          } catch (e) {}
+          renderTaskRef.current = null;
+        }
+
         // Fetch PDF document
         const loadingTask = pdfjsLib.getDocument({
           url,
           withCredentials: true, // critical for standard cookie auth
         });
+        loadingTaskRef.current = loadingTask;
+
         const pdf = await loadingTask.promise;
         
         if (!active) return;
@@ -80,12 +98,30 @@ export const PDFPageRenderer: React.FC<PDFPageRendererProps> = ({ url, className
           canvasContext: context,
           viewport: viewport,
         };
-        await page.render(renderContext).promise;
+
+        // Double check renderTask before starting rendering
+        if (renderTaskRef.current) {
+          try {
+            renderTaskRef.current.cancel();
+          } catch (e) {}
+        }
+
+        const renderTask = page.render(renderContext);
+        renderTaskRef.current = renderTask;
+
+        await renderTask.promise;
         
         if (active) {
           setLoading(false);
         }
       } catch (err: any) {
+        if (
+          err?.name === "RenderingCancelledException" ||
+          err?.message?.includes("cancelled") ||
+          err?.message?.includes("destroyed")
+        ) {
+          return;
+        }
         console.error("PDF Render Error:", err);
         if (active) {
           setError("Failed to render preview. Try adjusting spacing values.");
@@ -98,6 +134,18 @@ export const PDFPageRenderer: React.FC<PDFPageRendererProps> = ({ url, className
 
     return () => {
       active = false;
+      if (loadingTaskRef.current) {
+        try {
+          loadingTaskRef.current.destroy();
+        } catch (e) {}
+        loadingTaskRef.current = null;
+      }
+      if (renderTaskRef.current) {
+        try {
+          renderTaskRef.current.cancel();
+        } catch (e) {}
+        renderTaskRef.current = null;
+      }
     };
   }, [url, pageNumber, rotation]);
 

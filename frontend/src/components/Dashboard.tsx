@@ -324,10 +324,13 @@ export const Dashboard: React.FC = () => {
         guides,
         current_booklet_id: data.booklet_id,
       }).catch(err => console.warn("Failed to clean up old booklet sessions:", err))
+
+      queryClient.invalidateQueries({ queryKey: ["booklets"] })
     },
     onError: (err: any) => {
       setCompileStatus(`Compilation failed: ${err.message}`)
       setCompiling(false)
+      queryClient.invalidateQueries({ queryKey: ["booklets"] })
     }
   })
 
@@ -344,22 +347,25 @@ export const Dashboard: React.FC = () => {
           setPollingBookletId(null)
           setActiveBookletId(pollingBookletId)
           setCompileStatus("")
+          queryClient.invalidateQueries({ queryKey: ["booklets"] })
         } else if (booklet.status === "failed") {
           clearInterval(interval)
           setCompiling(false)
           setPollingBookletId(null)
           setCompileStatus("Booklet generation failed on backend.")
+          queryClient.invalidateQueries({ queryKey: ["booklets"] })
         }
       } catch (err) {
         clearInterval(interval)
         setCompiling(false)
         setPollingBookletId(null)
         setCompileStatus("Error polling booklet compile status.")
+        queryClient.invalidateQueries({ queryKey: ["booklets"] })
       }
     }, 2000)
 
     return () => clearInterval(interval)
-  }, [pollingBookletId])
+  }, [pollingBookletId, queryClient])
 
   // Reset active booklet mode
   if (activeBookletId && docDetail) {
@@ -373,6 +379,7 @@ export const Dashboard: React.FC = () => {
         onBack={() => {
           setActiveBookletId(null)
           setCompileStatus("")
+          queryClient.invalidateQueries({ queryKey: ["booklets"] })
         }}
       />
     )
