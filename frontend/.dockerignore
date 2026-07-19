@@ -1,0 +1,8 @@
+node_modules
+dist
+.git
+.gitignore
+.shadcn-doctor-cache.json
+README.md
+.oxlintrc.json
+palette.txt

@@ -1,0 +1,5 @@
+*.exe
+booklet-backend
+.git
+.gitignore
+README.md
