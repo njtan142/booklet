@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { Link } from "@tanstack/react-router"
 import { api } from "../api"
 import type { DocumentInfo, DocumentDetail, BookletListResponse } from "../api"
 import { Button } from "./ui/button"
@@ -12,6 +13,13 @@ import { Slider } from "./ui/slider"
 import { Checkbox } from "./ui/checkbox"
 import { PrintHelper } from "./PrintHelper"
 import { PDFPageRenderer } from "./PDFPageRenderer"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "./ui/dialog"
 import {
   UploadCloud,
   FileText,
@@ -60,6 +68,8 @@ export const Dashboard: React.FC = () => {
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([])
   const [failedUploads, setFailedUploads] = useState<FailedUpload[]>([])
   const [searchQuery, setSearchQuery] = useState<string>("")
+  const [isLibraryModalOpen, setIsLibraryModalOpen] = useState<boolean>(false)
+  const [modalSearchQuery, setModalSearchQuery] = useState<string>("")
 
   // 1. Fetch document list
   const { data: rawDocuments, isLoading: loadingDocs, refetch: refetchDocs } = useQuery({
@@ -78,6 +88,12 @@ export const Dashboard: React.FC = () => {
     const query = searchQuery.toLowerCase()
     return documents.filter((doc) => doc.name.toLowerCase().includes(query))
   }, [documents, searchQuery])
+
+  const filteredModalDocuments = useMemo(() => {
+    if (!modalSearchQuery.trim()) return documents
+    const query = modalSearchQuery.toLowerCase()
+    return documents.filter((doc) => doc.name.toLowerCase().includes(query))
+  }, [documents, modalSearchQuery])
 
   // 2. Fetch selected document details
   const { data: docDetail, isLoading: loadingDocDetail } = useQuery({
@@ -100,6 +116,21 @@ export const Dashboard: React.FC = () => {
       return hasProcessing ? 2000 : false
     }
   })
+
+  // Auto-select session if session_id is in query parameters
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const sessionId = params.get("session_id")
+    if (sessionId && recentSessions && recentSessions.length > 0) {
+      const session = recentSessions.find(s => s.id === sessionId)
+      if (session) {
+        handleSelectSession(session)
+        // Clean query parameter from URL
+        const newUrl = window.location.pathname
+        window.history.replaceState({}, document.title, newUrl)
+      }
+    }
+  }, [recentSessions])
 
   const handleSelectSession = (session: BookletListResponse) => {
     setSelectedDocId(session.document_id)
@@ -453,7 +484,17 @@ export const Dashboard: React.FC = () => {
         </div>
 
         <div className="glass p-6 rounded-2xl border-border space-y-4">
-          <h3 className="text-lg font-bold text-foreground m-0">Library</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-bold text-foreground m-0">Library</h3>
+            <Button
+              type="button"
+              variant="link"
+              className="p-0 h-auto text-xs text-primary hover:underline font-semibold"
+              onClick={() => setIsLibraryModalOpen(true)}
+            >
+              See all
+            </Button>
+          </div>
 
           {loadingDocs ? (
             <div className="flex items-center justify-center py-8">
@@ -578,7 +619,15 @@ export const Dashboard: React.FC = () => {
         </div>
 
         <div className="glass p-6 rounded-2xl border-border space-y-4">
-          <h3 className="text-lg font-bold text-foreground m-0">Recent Print Sessions</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-bold text-foreground m-0">Recent Print Sessions</h3>
+            <Link
+              to="/sessions"
+              className="text-xs text-primary hover:underline font-semibold"
+            >
+              See all
+            </Link>
+          </div>
           {loadingSessions ? (
             <div className="flex items-center justify-center py-6">
               <Loader2 className="h-5 w-5 animate-spin text-primary" aria-hidden="true" />
@@ -770,6 +819,142 @@ export const Dashboard: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Library Selection Modal */}
+      <Dialog open={isLibraryModalOpen} onOpenChange={setIsLibraryModalOpen}>
+        <DialogContent className="max-w-2xl glass">
+          <DialogHeader>
+            <DialogTitle>Document Library</DialogTitle>
+            <DialogDescription>
+              Select an uploaded document to configure booklet imposition parameters.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 mt-2">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                type="text"
+                placeholder="Search documents by name..."
+                className="pl-8"
+                value={modalSearchQuery}
+                onChange={(e) => setModalSearchQuery(e.target.value)}
+              />
+            </div>
+
+            {loadingDocs ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" aria-hidden="true" />
+              </div>
+            ) : documents.length === 0 ? (
+              <p className="text-muted-foreground text-xs text-center py-10">No documents uploaded yet.</p>
+            ) : filteredModalDocuments.length === 0 ? (
+              <p className="text-muted-foreground text-xs text-center py-10">No matching documents found.</p>
+            ) : (
+              <ScrollArea className="max-h-[380px] pr-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pb-2">
+                  {filteredModalDocuments.map((doc) => {
+                    const isSelected = selectedDocId === doc.id
+                    const failedUpload = failedUploads.find((item) => item.documentId === doc.id)
+                    const effectiveStatus = failedUpload ? "failed" : doc.status
+
+                    if (effectiveStatus === "failed") {
+                      return (
+                        <div
+                          key={doc.id}
+                          className="w-full text-left p-3.5 rounded-xl border flex flex-col justify-between gap-3 bg-destructive/10 border-destructive/25"
+                        >
+                          <div className="flex items-start gap-3 min-w-0">
+                            <Card className="p-2 rounded-lg bg-destructive/15 text-destructive border-none shadow-none shrink-0">
+                              <FileText className="h-4 w-4" aria-hidden="true" />
+                            </Card>
+                            <div className="min-w-0">
+                              <h4 className="text-xs font-bold text-foreground truncate" title={doc.name}>{doc.name}</h4>
+                              <p className="text-[10px] text-destructive/80 mt-0.5 leading-normal">
+                                {failedUpload ? failedUpload.message : "Processing failed."}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 self-end">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-[10px] px-2.5"
+                              onClick={() => resumeMutation.mutate(doc.id)}
+                            >
+                              Resume
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 text-[10px] text-destructive hover:text-destructive hover:bg-destructive/15 px-2.5"
+                              onClick={() => dismissFailedUpload(failedUpload?.id ?? `doc-${doc.id}`)}
+                            >
+                              Dismiss
+                            </Button>
+                          </div>
+                        </div>
+                      )
+                    }
+
+                    return (
+                      <Button
+                        type="button"
+                        key={doc.id}
+                        variant="ghost"
+                        onClick={() => {
+                          if (doc.status === "ready") {
+                            setSelectedDocId(doc.id)
+                            setIsLibraryModalOpen(false)
+                          }
+                        }}
+                        disabled={doc.status !== "ready"}
+                        className={`w-full text-left h-auto p-3.5 rounded-xl border flex items-center justify-between gap-3 cursor-pointer transition-all whitespace-normal ${isSelected
+                            ? "bg-primary/10 border-primary/30"
+                            : (effectiveStatus === "processing" || effectiveStatus === "queued")
+                              ? "bg-muted/30 border-border opacity-60 cursor-not-allowed"
+                              : "bg-background/60 border-border hover:border-primary/25"
+                          }`}
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className={`p-2 rounded-lg shrink-0 ${isSelected ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"}`}>
+                            <FileText className="h-4 w-4" aria-hidden="true" />
+                          </div>
+                          <div className="min-w-0">
+                            <h4 className="text-xs font-bold text-foreground truncate" title={doc.name}>{doc.name}</h4>
+                            <p className="text-[10px] text-muted-foreground mt-0.5">
+                              {doc.status === "queued" 
+                                ? "Queued..." 
+                                : doc.status === "processing" 
+                                  ? doc.split_pages < doc.total_pages
+                                    ? `Splitting (${doc.split_pages}/${doc.total_pages})...`
+                                    : `Parsing (${doc.parsed_pages}/${doc.total_pages})...` 
+                                  : `${doc.total_pages} pages`}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="shrink-0">
+                          {(effectiveStatus === "processing" || effectiveStatus === "queued") ? (
+                            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden="true" />
+                          ) : effectiveStatus === "failed" ? (
+                            <AlertCircle className="h-4 w-4 text-destructive" aria-hidden="true" />
+                          ) : (
+                            <FileCheck className="h-4 w-4 text-emerald-500" aria-hidden="true" />
+                          )}
+                        </div>
+                      </Button>
+                    )
+                  })}
+                </div>
+              </ScrollArea>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

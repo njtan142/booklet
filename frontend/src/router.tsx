@@ -10,7 +10,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import React, { useEffect, useState } from "react"
 import { api } from "./api"
 import type { AuthStatus } from "./api"
-import { LogOut, BookOpen, Search, User, Sun, Moon, Monitor } from "lucide-react"
+import { LogOut, BookOpen, Search, User, Sun, Moon, Monitor, Printer } from "lucide-react"
 import { Card } from "./components/ui/card"
 import { Button } from "./components/ui/button"
 import { useTheme } from "./components/theme-provider"
@@ -18,6 +18,7 @@ import { useTheme } from "./components/theme-provider"
 import { Dashboard } from "./components/Dashboard"
 import { SemanticSearch } from "./components/SemanticSearch"
 import { Login } from "./components/Login"
+import { PrintSessions } from "./components/PrintSessions"
 
 // Create TanStack Query Client
 export const queryClient = new QueryClient({
@@ -96,6 +97,15 @@ const RootLayout: React.FC = () => {
               >
                 <Search className="h-4 w-4" aria-hidden="true" />
                 Semantic Search
+              </Link>
+              <Link
+                to="/sessions"
+                activeProps={{ className: "bg-primary/15 text-primary border-primary/30" }}
+                inactiveProps={{ className: "text-muted-foreground hover:text-foreground hover:bg-muted/60 border-transparent" }}
+                className="px-4 py-2 rounded-lg text-sm font-medium border transition-all flex items-center gap-2"
+              >
+                <Printer className="h-4 w-4" aria-hidden="true" />
+                Print Sessions
               </Link>
 
             </nav>
@@ -202,7 +212,13 @@ export const loginRoute = createRoute({
   component: Login,
 })
 
-const routeTree = rootRoute.addChildren([indexRoute, searchRoute, loginRoute])
+export const sessionsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/sessions",
+  component: PrintSessions,
+})
+
+const routeTree = rootRoute.addChildren([indexRoute, searchRoute, loginRoute, sessionsRoute])
 
 export const router = createRouter({ routeTree })
 
