@@ -40,6 +40,12 @@ export interface BookletInfo {
   created_at: string;
 }
 
+export interface BookletProgress {
+  booklet_id: string;
+  batch_size: number;
+  completed_batches: Record<number, boolean>;
+}
+
 export interface BookletListResponse {
   id: string;
   document_id: string;
@@ -193,5 +199,16 @@ export const api = {
   emailBooklet: (bookletId: string, email: string) => apiFetch<{ status: string; message: string }>(`/booklets/${bookletId}/email`, {
     method: "POST",
     body: JSON.stringify({ email }),
+  }),
+  
+  getBookletProgress: (bookletId: string) => apiFetch<BookletProgress>(`/booklets/${bookletId}/progress`),
+  
+  updateBookletProgress: (
+    bookletId: string,
+    batchSize: number,
+    completedBatches: Record<number, boolean>
+  ) => apiFetch<{ message: string }>(`/booklets/${bookletId}/progress`, {
+    method: "POST",
+    body: JSON.stringify({ batch_size: batchSize, completed_batches: completedBatches }),
   }),
 };

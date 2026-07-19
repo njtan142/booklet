@@ -50,6 +50,26 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, documentId,
     }).catch(() => {})
   }, [])
 
+  // Load print progress from database on mount or when bookletId changes
+  useEffect(() => {
+    if (bookletId) {
+      api.getBookletProgress(bookletId)
+        .then((progress) => {
+          if (progress) {
+            if (progress.batch_size !== undefined) {
+              setBatchSize(progress.batch_size)
+            }
+            if (progress.completed_batches) {
+              setCompletedBatches(progress.completed_batches)
+            }
+          }
+        })
+        .catch((err) => {
+          console.error("Failed to load booklet print progress:", err)
+        })
+    }
+  }, [bookletId])
+
   // Total sheets in booklet is Ceil(totalPages / 4).
   // Target pages is Ceil(totalPages / 4) * 4.
   const targetPages = Math.ceil(totalPages / 4) * 4
@@ -68,11 +88,17 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, documentId,
     }
   })
 
-  const toggleBatchComplete = (batchId: number) => {
-    setCompletedBatches(prev => ({
-      ...prev,
-      [batchId]: !prev[batchId]
-    }))
+  const toggleBatchComplete = async (batchId: number) => {
+    const updated = {
+      ...completedBatches,
+      [batchId]: !completedBatches[batchId]
+    }
+    setCompletedBatches(updated)
+    try {
+      await api.updateBookletProgress(bookletId, batchSize, updated)
+    } catch (err) {
+      console.error("Failed to save batch completion to database:", err)
+    }
   }
 
   const handleDownloadSheet = (type: "fronts" | "backs" | "both") => {
@@ -183,10 +209,16 @@ export const PrintHelper: React.FC<PrintHelperProps> = ({ bookletId, documentId,
                 <span className="text-muted-foreground text-[11px] shrink-0">Batch size:</span>
                 <Select
                   value={batchSize}
-                  onChange={(e) => {
-                    setBatchSize(parseInt(e.target.value))
+                  onChange={async (e) => {
+                    const newBatchSize = parseInt(e.target.value)
+                    setBatchSize(newBatchSize)
                     setCompletedBatches({})
                     setSelectedSheet(1)
+                    try {
+                      await api.updateBookletProgress(bookletId, newBatchSize, {})
+                    } catch (err) {
+                      console.error("Failed to save batch size to database:", err)
+                    }
                   }}
                   className="h-7 text-xs py-0 pr-8 w-28"
                 >

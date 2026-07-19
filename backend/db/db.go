@@ -162,6 +162,20 @@ func runMigrations() error {
 		return err
 	}
 
+	// 4b. Booklet Print Progress Table
+	log.Println("Creating booklet_print_progress table...")
+	_, err = DB.Exec(`
+		CREATE TABLE IF NOT EXISTS booklet_print_progress (
+			booklet_id UUID PRIMARY KEY REFERENCES compiled_booklets(id) ON DELETE CASCADE,
+			batch_size INT NOT NULL DEFAULT 10,
+			completed_batches TEXT NOT NULL DEFAULT '{}',
+			updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+		);
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create booklet_print_progress table: %w", err)
+	}
+
 	// 5. SMTP Config Table
 	log.Println("Creating smtp_config table...")
 	_, err = DB.Exec(`

@@ -90,6 +90,7 @@ func main() {
 	mux.Handle("/api/documents/{id}/booklet/cleanup", auth.RequireAuth(handlers.InstrumentHandler("/api/documents/{id}/booklet/cleanup", handlers.HandleCleanupBooklets)))
 	mux.Handle("/api/booklets", auth.RequireAuth(handlers.InstrumentHandler("/api/booklets", handlers.HandleListBooklets)))
 	mux.Handle("/api/booklets/{id}", auth.RequireAuth(handlers.InstrumentHandler("/api/booklets/{id}", handlers.HandleGetBooklet)))
+	mux.Handle("/api/booklets/{id}/progress", auth.RequireAuth(handlers.InstrumentHandler("/api/booklets/{id}/progress", handlers.HandleBookletProgress)))
 	mux.Handle("/api/booklets/{id}/download", auth.RequireAuth(handlers.InstrumentHandler("/api/booklets/{id}/download", handlers.HandleDownloadBooklet)))
 
 	// Semantic Search route (requires authentication middleware)
