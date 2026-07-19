@@ -12,7 +12,7 @@ test.describe('PDF Booklet Maker & Semantic Search Flow', () => {
     await page.click('role=tab[name="Developer Bypass"]');
     await page.fill('input[placeholder="e.g. dev@example.com"]', 'test-e2e@example.com');
     await page.fill('input[placeholder="e.g. Developer User"]', 'E2E Tester');
-    await page.click('button:has-text("Spawn Mock Session")');
+    await page.click('button:has-text("Start Dev Session")');
 
     // 3. Confirm redirection to Dashboard
     await page.waitForURL('/');

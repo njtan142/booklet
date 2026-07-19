@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react"
+import React, { useState, useEffect, useMemo } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { api } from "../api"
 import type { DocumentInfo, DocumentDetail, BookletListResponse } from "../api"
@@ -22,7 +22,8 @@ import {
   AlertCircle,
   FileCheck,
   X,
-  Eye
+  Eye,
+  Search
 } from "lucide-react"
 
 type PendingUpload = {
@@ -58,6 +59,7 @@ export const Dashboard: React.FC = () => {
   const [pollingBookletId, setPollingBookletId] = useState<string | null>(null)
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([])
   const [failedUploads, setFailedUploads] = useState<FailedUpload[]>([])
+  const [searchQuery, setSearchQuery] = useState<string>("")
 
   // 1. Fetch document list
   const { data: rawDocuments, isLoading: loadingDocs, refetch: refetchDocs } = useQuery({
@@ -70,6 +72,12 @@ export const Dashboard: React.FC = () => {
     }
   })
   const documents = rawDocuments || []
+
+  const filteredDocuments = useMemo(() => {
+    if (!searchQuery.trim()) return documents
+    const query = searchQuery.toLowerCase()
+    return documents.filter((doc) => doc.name.toLowerCase().includes(query))
+  }, [documents, searchQuery])
 
   // 2. Fetch selected document details
   const { data: docDetail, isLoading: loadingDocDetail } = useQuery({
@@ -454,101 +462,118 @@ export const Dashboard: React.FC = () => {
           ) : documents.length === 0 ? (
             <p className="text-muted-foreground text-xs text-center py-6">No documents uploaded yet.</p>
           ) : (
-            <ScrollArea className="max-h-[400px]">
-              <div className="space-y-2.5 pr-4">
-                {documents.map((doc) => {
-                  const isSelected = selectedDocId === doc.id
-                  const failedUpload = failedUploads.find((item) => item.documentId === doc.id)
-                  const effectiveStatus = failedUpload ? "failed" : doc.status
-
-                  if (effectiveStatus === "failed") {
-                    return (
-                      <div
-                        key={doc.id}
-                        className="w-full text-left h-auto p-3.5 rounded-xl border flex items-center justify-between gap-4 bg-destructive/10 border-destructive/25"
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <Card className="p-2 rounded-lg bg-destructive/15 text-destructive border-none shadow-none">
-                            <FileText className="h-4 w-4" aria-hidden="true" />
-                          </Card>
-                          <div className="min-w-0">
-                            <h4 className="text-xs font-bold text-foreground truncate m-0">{doc.name}</h4>
-                            <p className="text-[10px] text-destructive/80 mt-0.5">
-                              Upload failed{failedUpload ? `: ${failedUpload.message}` : "."}
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="h-8 text-[11px]"
-                            onClick={() => resumeMutation.mutate(doc.id)}
-                          >
-                            Resume
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-8 text-[11px] text-destructive hover:text-destructive hover:bg-destructive/15"
-                            onClick={() => dismissFailedUpload(failedUpload?.id ?? `doc-${doc.id}`)}
-                          >
-                            Dismiss
-                          </Button>
-                        </div>
-                      </div>
-                    )
-                  }
-
-                  return (
-                    <Button
-                      type="button"
-                      key={doc.id}
-                      variant="ghost"
-                      onClick={() => doc.status === "ready" && setSelectedDocId(doc.id)}
-                      disabled={doc.status !== "ready"}
-                      className={`w-full text-left h-auto p-3.5 rounded-xl border flex items-center justify-between gap-4 cursor-pointer transition-all whitespace-normal ${isSelected
-                          ? "bg-primary/10 border-primary/30"
-                          : (effectiveStatus === "processing" || effectiveStatus === "queued")
-                            ? "bg-muted/30 border-border opacity-60 cursor-not-allowed"
-                            : "bg-background/60 border-border hover:border-primary/25"
-                        }`}
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className={`p-2 rounded-lg ${isSelected ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"}`}>
-                          <FileText className="h-4 w-4" aria-hidden="true" />
-                        </div>
-                        <div className="min-w-0">
-                          <h4 className="text-xs font-bold text-foreground truncate m-0">{doc.name}</h4>
-                          <p className="text-[10px] text-muted-foreground mt-0.5">
-                            {doc.status === "queued" 
-                              ? "Queued..." 
-                              : doc.status === "processing" 
-                                ? doc.split_pages < doc.total_pages
-                                  ? `Splitting (${doc.split_pages}/${doc.total_pages} pages)...`
-                                  : `Parsing (${doc.parsed_pages}/${doc.total_pages} pages)...` 
-                                : `${doc.total_pages} pages`}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div>
-                        {(effectiveStatus === "processing" || effectiveStatus === "queued") ? (
-                          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden="true" />
-                        ) : effectiveStatus === "failed" ? (
-                          <AlertCircle className="h-4 w-4 text-destructive" aria-hidden="true" />
-                        ) : (
-                          <FileCheck className="h-4 w-4 text-emerald-500" aria-hidden="true" />
-                        )}
-                      </div>
-                    </Button>
-                  )
-                })}
+            <>
+              <div className="relative">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  type="text"
+                  placeholder="Search documents..."
+                  className="pl-8"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
               </div>
-            </ScrollArea>
+
+              {filteredDocuments.length === 0 ? (
+                <p className="text-muted-foreground text-xs text-center py-6">No matching documents found.</p>
+              ) : (
+                <ScrollArea className="max-h-[400px]">
+                  <div className="space-y-2.5 pr-4">
+                    {filteredDocuments.map((doc) => {
+                      const isSelected = selectedDocId === doc.id
+                      const failedUpload = failedUploads.find((item) => item.documentId === doc.id)
+                      const effectiveStatus = failedUpload ? "failed" : doc.status
+
+                      if (effectiveStatus === "failed") {
+                        return (
+                          <div
+                            key={doc.id}
+                            className="w-full text-left h-auto p-3.5 rounded-xl border flex items-center justify-between gap-4 bg-destructive/10 border-destructive/25"
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <Card className="p-2 rounded-lg bg-destructive/15 text-destructive border-none shadow-none">
+                                <FileText className="h-4 w-4" aria-hidden="true" />
+                              </Card>
+                              <div className="min-w-0">
+                                <h4 className="text-xs font-bold text-foreground truncate m-0">{doc.name}</h4>
+                                <p className="text-[10px] text-destructive/80 mt-0.5">
+                                  Upload failed{failedUpload ? `: ${failedUpload.message}` : "."}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-8 text-[11px]"
+                                onClick={() => resumeMutation.mutate(doc.id)}
+                              >
+                                Resume
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 text-[11px] text-destructive hover:text-destructive hover:bg-destructive/15"
+                                onClick={() => dismissFailedUpload(failedUpload?.id ?? `doc-${doc.id}`)}
+                              >
+                                Dismiss
+                              </Button>
+                            </div>
+                          </div>
+                        )
+                      }
+
+                      return (
+                        <Button
+                          type="button"
+                          key={doc.id}
+                          variant="ghost"
+                          onClick={() => doc.status === "ready" && setSelectedDocId(doc.id)}
+                          disabled={doc.status !== "ready"}
+                          className={`w-full text-left h-auto p-3.5 rounded-xl border flex items-center justify-between gap-4 cursor-pointer transition-all whitespace-normal ${isSelected
+                              ? "bg-primary/10 border-primary/30"
+                              : (effectiveStatus === "processing" || effectiveStatus === "queued")
+                                ? "bg-muted/30 border-border opacity-60 cursor-not-allowed"
+                                : "bg-background/60 border-border hover:border-primary/25"
+                            }`}
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className={`p-2 rounded-lg ${isSelected ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"}`}>
+                              <FileText className="h-4 w-4" aria-hidden="true" />
+                            </div>
+                            <div className="min-w-0">
+                              <h4 className="text-xs font-bold text-foreground truncate m-0">{doc.name}</h4>
+                              <p className="text-[10px] text-muted-foreground mt-0.5">
+                                {doc.status === "queued" 
+                                  ? "Queued..." 
+                                  : doc.status === "processing" 
+                                    ? doc.split_pages < doc.total_pages
+                                      ? `Splitting (${doc.split_pages}/${doc.total_pages} pages)...`
+                                      : `Parsing (${doc.parsed_pages}/${doc.total_pages} pages)...` 
+                                    : `${doc.total_pages} pages`}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div>
+                            {(effectiveStatus === "processing" || effectiveStatus === "queued") ? (
+                              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden="true" />
+                            ) : effectiveStatus === "failed" ? (
+                              <AlertCircle className="h-4 w-4 text-destructive" aria-hidden="true" />
+                            ) : (
+                              <FileCheck className="h-4 w-4 text-emerald-500" aria-hidden="true" />
+                            )}
+                          </div>
+                        </Button>
+                      )
+                    })}
+                  </div>
+                </ScrollArea>
+              )}
+            </>
           )}
         </div>
 
