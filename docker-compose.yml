@@ -116,6 +116,42 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: booklet-worker
+    # Same image as the backend, switched into worker mode by ROLE. No ports and
+    # no CORS/frontend env: the worker serves no HTTP, it only drains the queue.
+    environment:
+      - ROLE=worker
+      - APP_ENV=development # Remove or change to 'production' in non-development deployments
+      - DATABASE_URL=postgres://postgres:postgres@db:5432/booklet?sslmode=disable
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - MINIO_USE_SSL=false
+      - MINIO_BUCKET=booklet
+      - EMBEDDING_PROVIDER=mock # Change to 'ollama' for real embeddings
+      - EMBEDDING_DIMENSION=384
+      - OLLAMA_HOST=http://ollama:11434
+      - SPLIT_CHUNK_SIZE=100
+      - PAGE_PARSING_TIMEOUT_SECONDS=5
+      - GODEBUG=madvdontneed=1
+      # Keep concurrency low: tool engines are memory-hungry, and several
+      # conversions in parallel will OOM a small host.
+      - WORKER_CONCURRENCY=2
+      - JOB_HEARTBEAT_INTERVAL=30s
+      # A job whose heartbeat is older than this is treated as abandoned and
+      # requeued, so it must exceed the longest expected single-job runtime.
+      - JOB_STALE_TIMEOUT=5m
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+
   frontend:
     build:
       context: ./frontend
