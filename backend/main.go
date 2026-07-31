@@ -5,7 +5,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"booklet/auth"
@@ -16,12 +18,22 @@ import (
 	"booklet/metrics"
 	"booklet/smtp"
 	"booklet/storage"
+	"booklet/worker"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func main() {
-	log.Println("Starting Booklet Backend service...")
+	// ROLE selects between serving the API and draining the job queue. Both roles
+	// run from this one binary and image, so the worker cannot drift out of sync
+	// with the tool registry the API validates against.
+	role := os.Getenv("ROLE")
+
+	if role == "worker" {
+		log.Println("Starting Booklet Worker service...")
+	} else {
+		log.Println("Starting Booklet Backend service...")
+	}
 
 	// 1. Initialize DB Layer
 	if err := db.InitDB(); err != nil {
@@ -38,6 +50,22 @@ func main() {
 
 	// 3. Initialize Embedding Layer (Ollama / Mock)
 	embeddings.InitEmbedder()
+
+	// The worker needs the database, storage and embedder above, but none of the
+	// HTTP concerns below: no OIDC, no SMTP probe, no CORS, no listener. It
+	// blocks here until SIGTERM, then drains its in-flight jobs.
+	if role == "worker" {
+		metrics.RegisterMetrics()
+
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+
+		if err := worker.Run(ctx); err != nil {
+			log.Fatalf("Fatal: Worker failed: %v", err)
+		}
+		log.Println("Worker stopped.")
+		return
+	}
 
 	// 4. Initialize Auth & OIDC
 	auth.InitAuth()
