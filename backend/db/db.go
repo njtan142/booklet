@@ -169,11 +169,20 @@ func runMigrations() error {
 			booklet_id UUID PRIMARY KEY REFERENCES compiled_booklets(id) ON DELETE CASCADE,
 			batch_size INT NOT NULL DEFAULT 10,
 			completed_batches TEXT NOT NULL DEFAULT '{}',
+			completed_sheets TEXT NOT NULL DEFAULT '{}',
 			updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 		);
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to create booklet_print_progress table: %w", err)
+	}
+
+	// Add completed_sheets column if it does not exist in case table was created earlier
+	_, err = DB.Exec(`
+		ALTER TABLE booklet_print_progress ADD COLUMN IF NOT EXISTS completed_sheets TEXT NOT NULL DEFAULT '{}';
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to add completed_sheets column: %w", err)
 	}
 
 	// 5. SMTP Config Table
