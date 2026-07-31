@@ -300,6 +300,14 @@ func HandleDevLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Ensure the user has a personal group. Documents created by this user are
+	// grouped here by default, so it must exist before the first upload.
+	if _, err := db.EnsurePersonalGroup(user.ID); err != nil {
+		logger.Logf(r.Context(), "[DEV BYPASS] Failed to ensure personal group for %s: %v", user.ID, err)
+		http.Error(w, fmt.Sprintf("failed to provision user group: %v", err), http.StatusInternalServerError)
+		return
+	}
+
 	tokenStr, err := GenerateToken(user)
 	if err != nil {
 		logger.Logf(r.Context(), "[DEV BYPASS] Session token generation failed: %v", err)
@@ -411,6 +419,15 @@ func HandleCallback(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		logger.Logf(r.Context(), "HandleCallback: failed to save user info to database: %v", err)
 		http.Error(w, "failed to save user info to database", http.StatusInternalServerError)
+		return
+	}
+
+	// Ensure the user has a personal group. Documents created by this user are
+	// grouped here by default, so it must exist before the first upload. Existing
+	// users predating the permission model are migrated on their next login.
+	if _, err := db.EnsurePersonalGroup(user.ID); err != nil {
+		logger.Logf(r.Context(), "HandleCallback: failed to ensure personal group for %s: %v", user.ID, err)
+		http.Error(w, "failed to provision user group", http.StatusInternalServerError)
 		return
 	}
 
