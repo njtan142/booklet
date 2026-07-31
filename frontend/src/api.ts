@@ -43,7 +43,8 @@ export interface BookletInfo {
 export interface BookletProgress {
   booklet_id: string;
   batch_size: number;
-  completed_batches: Record<number, boolean>;
+  completed_sheets: Record<number, boolean>;
+  completed_batches?: Record<number, boolean>;
 }
 
 export interface BookletListResponse {
@@ -206,9 +207,9 @@ export const api = {
   updateBookletProgress: (
     bookletId: string,
     batchSize: number,
-    completedBatches: Record<number, boolean>
+    completedSheets: Record<number, boolean>
   ) => apiFetch<{ message: string }>(`/booklets/${bookletId}/progress`, {
     method: "POST",
-    body: JSON.stringify({ batch_size: batchSize, completed_batches: completedBatches }),
+    body: JSON.stringify({ batch_size: batchSize, completed_sheets: completedSheets }),
   }),
 };
