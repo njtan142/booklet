@@ -25,6 +25,7 @@ import (
 	"booklet/logger"
 	"booklet/metrics"
 	"booklet/pdf"
+	"booklet/permissions"
 	"booklet/smtp"
 	"booklet/storage"
 
@@ -102,7 +103,28 @@ func HandleListDocuments(w http.ResponseWriter, r *http.Request) {
 	}
 
 	logger.Logf(r.Context(), "HandleListDocuments: querying database for active documents")
-	rows, err := db.DB.Query(`SELECT id, name, total_pages, split_pages, parsed_pages, status, created_at, updated_at FROM documents WHERE is_dismissed = FALSE ORDER BY created_at DESC`)
+
+	// Restrict the listing to documents the caller may read. Without this every
+	// authenticated user sees every document in the system.
+	// total_pages is nullable for non-paginated kinds ('source'/'export'), so
+	// coalesce it rather than scanning NULL into an int.
+	query := `SELECT id, name, COALESCE(total_pages, 0), split_pages, parsed_pages, status, created_at, updated_at
+		FROM documents WHERE is_dismissed = FALSE`
+	var args []any
+	if !permissions.IsAdmin(r) {
+		userID := permissions.CurrentUserID(r)
+		if userID == "" {
+			logger.Logf(r.Context(), "HandleListDocuments: no authenticated user on request")
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		clause, clauseArgs := permissions.VisibilityClause(userID, len(args)+1, "")
+		query += " AND " + clause
+		args = append(args, clauseArgs...)
+	}
+	query += " ORDER BY created_at DESC"
+
+	rows, err := db.DB.Query(query, args...)
 	if err != nil {
 		logger.Logf(r.Context(), "Error: failed to query documents list: %v", err)
 		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
@@ -155,6 +177,10 @@ func HandleDismissDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !permissions.EnforceDocument(w, r, docID, permissions.PermWrite) {
+		return
+	}
+
 	_, err := db.DB.Exec(`UPDATE documents SET is_dismissed = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = $1`, docID)
 	if err != nil {
 		logger.Logf(r.Context(), "Error: failed to dismiss document %s: %v", docID, err)
@@ -181,10 +207,14 @@ func HandleGetDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !permissions.EnforceDocument(w, r, docID, permissions.PermRead) {
+		return
+	}
+
 	var d DocumentDetailResponse
 	var id string
 	err := db.DB.QueryRow(`
-		SELECT id, name, total_pages, split_pages, parsed_pages, status, created_at, updated_at 
+		SELECT id, name, COALESCE(total_pages, 0), split_pages, parsed_pages, status, created_at, updated_at 
 		FROM documents WHERE id = $1`, docID).Scan(&id, &d.Name, &d.TotalPages, &d.SplitPages, &d.ParsedPages, &d.Status, &d.CreatedAt, &d.UpdatedAt)
 	
 	if err == sql.ErrNoRows {
@@ -258,6 +288,10 @@ func HandleGetPagePDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !permissions.EnforceDocument(w, r, docID, permissions.PermRead) {
+		return
+	}
+
 	// Verify page exists and get storage path
 	var storagePath string
 	err = db.DB.QueryRow(`
@@ -310,6 +344,10 @@ func HandleGetBookletPreviewPDF(w http.ResponseWriter, r *http.Request) {
 	if _, err := uuid.Parse(docID); err != nil {
 		logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Invalid UUID format: %s", docID)
 		http.Error(w, "invalid UUID format", http.StatusBadRequest)
+		return
+	}
+
+	if !permissions.EnforceDocument(w, r, docID, permissions.PermRead) {
 		return
 	}
 
@@ -593,8 +631,23 @@ func HandleUploadDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
+	// Resolve the owner before touching storage: an upload with no owner would be
+	// an unreachable row under the permission model.
+	ownerID := permissions.CurrentUserID(r)
+	if ownerID == "" {
+		logger.Logf(r.Context(), "HandleUploadDocument: no authenticated user on upload request")
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	groupID, err := db.PrimaryGroupID(ownerID)
+	if err != nil {
+		logger.Logf(r.Context(), "Error: failed to resolve primary group for %s: %v", ownerID, err)
+		http.Error(w, "failed to resolve user group", http.StatusInternalServerError)
+		return
+	}
+
 	docID := uuid.New()
-	logger.Logf(r.Context(), "HandleUploadDocument: starting upload for file=%s (docID=%s)", header.Filename, docID)
+	logger.Logf(r.Context(), "HandleUploadDocument: starting upload for file=%s (docID=%s owner=%s)", header.Filename, docID, ownerID)
 	
 	// Create local temp file to inspect PDF page count and perform split
 	tempDir, err := os.MkdirTemp("", "booklet-upload-*")
@@ -635,9 +688,10 @@ func HandleUploadDocument(w http.ResponseWriter, r *http.Request) {
 
 	// Insert document metadata with processing status
 	_, err = db.DB.Exec(`
-		INSERT INTO documents (id, name, total_pages, split_pages, parsed_pages, status, original_storage_path, created_at, updated_at) 
-		VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`, 
-		docID, header.Filename, 0, 0, 0, "queued", originalKey)
+		INSERT INTO documents (id, name, total_pages, split_pages, parsed_pages, status, original_storage_path,
+		                       owner_id, group_id, mode, kind, mime_type, original_filename, created_at, updated_at) 
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pdf', 'application/pdf', $11, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`, 
+		docID, header.Filename, 0, 0, 0, "queued", originalKey, ownerID, groupID, db.ModeDefault, header.Filename)
 	
 	if err != nil {
 		os.RemoveAll(tempDir)
@@ -895,12 +949,15 @@ func HandleListBooklets(w http.ResponseWriter, r *http.Request) {
 		logger.Logf(r.Context(), "Warning: failed to dynamically clean up stale compiled booklets: %v", err)
 	}
 
-	rows, err := db.DB.Query(`
+	// This join exposes document names, so it must be filtered by document
+	// visibility too. Without the clause, user B can enumerate user A's document
+	// titles through the booklet list without ever calling /api/documents.
+	bookletQuery := `
 		SELECT 
 			cb.id, 
 			cb.document_id, 
 			d.name, 
-			d.total_pages,
+			COALESCE(d.total_pages, 0),
 			cb.status, 
 			cb.config_margin, 
 			cb.config_gutter, 
@@ -909,8 +966,22 @@ func HandleListBooklets(w http.ResponseWriter, r *http.Request) {
 			cb.config_guides, 
 			cb.created_at
 		FROM compiled_booklets cb
-		JOIN documents d ON cb.document_id = d.id
-		ORDER BY cb.created_at DESC`)
+		JOIN documents d ON cb.document_id = d.id`
+	var bookletArgs []any
+	if !permissions.IsAdmin(r) {
+		userID := permissions.CurrentUserID(r)
+		if userID == "" {
+			logger.Logf(r.Context(), "HandleListBooklets: no authenticated user on request")
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		clause, clauseArgs := permissions.VisibilityClause(userID, len(bookletArgs)+1, "d.")
+		bookletQuery += " WHERE " + clause
+		bookletArgs = append(bookletArgs, clauseArgs...)
+	}
+	bookletQuery += " ORDER BY cb.created_at DESC"
+
+	rows, err := db.DB.Query(bookletQuery, bookletArgs...)
 	if err != nil {
 		logger.Logf(r.Context(), "Error: failed to query booklets: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -944,6 +1015,40 @@ func HandleListBooklets(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(list)
+}
+
+// enforceBookletAccess checks perm on the document a booklet was compiled from,
+// writing the HTTP error response itself when access is refused.
+//
+// Booklets have no independent ownership: they inherit it from their parent
+// document. Every booklet-keyed route must go through here, because a booklet id
+// is otherwise an unguarded handle onto another user's document.
+//
+// A booklet whose parent is unreadable returns 404, identical to a booklet that
+// does not exist.
+func enforceBookletAccess(w http.ResponseWriter, r *http.Request, bookletID string, perm permissions.Perm) bool {
+	if permissions.IsAdmin(r) {
+		return true
+	}
+
+	var docID string
+	err := db.DB.QueryRowContext(r.Context(),
+		`SELECT document_id::text FROM compiled_booklets WHERE id = $1`, bookletID).Scan(&docID)
+	if errors.Is(err, sql.ErrNoRows) {
+		logger.Logf(r.Context(), "enforceBookletAccess: booklet %s not found", bookletID)
+		http.Error(w, "booklet not found", http.StatusNotFound)
+		return false
+	}
+	if err != nil {
+		logger.Logf(r.Context(), "Error: failed to resolve parent document for booklet %s: %v", bookletID, err)
+		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
+		return false
+	}
+
+	if !permissions.EnforceDocument(w, r, docID, perm) {
+		return false
+	}
+	return true
 }
 
 func cleanOldBookletSessions(ctx context.Context, docID string, req BookletCompileRequest, currentBookletID uuid.UUID) {
@@ -1017,6 +1122,11 @@ func HandleCleanupBooklets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Cleanup deletes compiled artifacts belonging to this document.
+	if !permissions.EnforceDocument(w, r, docID, permissions.PermWrite) {
+		return
+	}
+
 	var req BookletCleanupRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		logger.Logf(r.Context(), "Error: failed to decode booklet cleanup request JSON: %v", err)
@@ -1059,6 +1169,10 @@ func HandleResumeDocument(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		logger.Logf(r.Context(), "HandleResumeDocument: invalid UUID format: %s", docIDStr)
 		http.Error(w, "invalid UUID format", http.StatusBadRequest)
+		return
+	}
+
+	if !permissions.EnforceDocument(w, r, docIDStr, permissions.PermWrite) {
 		return
 	}
 
@@ -1140,6 +1254,11 @@ func HandleCompileBooklet(w http.ResponseWriter, r *http.Request) {
 	if _, err := uuid.Parse(docID); err != nil {
 		logger.Logf(r.Context(), "HandleCompileBooklet: invalid UUID format: %s", docID)
 		http.Error(w, "invalid UUID format", http.StatusBadRequest)
+		return
+	}
+
+	// Compiling writes a derived artifact from the document, so it needs write.
+	if !permissions.EnforceDocument(w, r, docID, permissions.PermWrite) {
 		return
 	}
 
@@ -1334,6 +1453,10 @@ func HandleGetBooklet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !enforceBookletAccess(w, r, bookletID, permissions.PermRead) {
+		return
+	}
+
 	var b BookletResponse
 	err := db.DB.QueryRow(`
 		SELECT id, document_id, status, created_at 
@@ -1369,12 +1492,16 @@ func HandleDownloadBooklet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !enforceBookletAccess(w, r, bookletID, permissions.PermRead) {
+		return
+	}
+
 	var status, storagePath, paperSize, docID string
 	var sigSize, totalOriginalPages int
 	var margin, gutter float64
 	var guides bool
 	err := db.DB.QueryRow(`
-		SELECT cb.status, cb.storage_path, cb.config_signature_size, d.total_pages, cb.config_paper_size, cb.document_id, cb.config_margin, cb.config_gutter, cb.config_guides
+		SELECT cb.status, cb.storage_path, cb.config_signature_size, COALESCE(d.total_pages, 0), cb.config_paper_size, cb.document_id, cb.config_margin, cb.config_gutter, cb.config_guides
 		FROM compiled_booklets cb
 		JOIN documents d ON cb.document_id = d.id
 		WHERE cb.id = $1`, bookletID).Scan(&status, &storagePath, &sigSize, &totalOriginalPages, &paperSize, &docID, &margin, &gutter, &guides)
@@ -1585,12 +1712,33 @@ func HandleSemanticSearch(w http.ResponseWriter, r *http.Request) {
 	var args []interface{}
 	args = append(args, queryVecStr)
 
+	var conditions []string
+
 	if docFilter != "" {
 		if _, err := uuid.Parse(docFilter); err == nil {
-			sqlQuery += " WHERE p.document_id = $2"
 			args = append(args, docFilter)
+			conditions = append(conditions, fmt.Sprintf("p.document_id = $%d", len(args)))
 			logger.Logf(r.Context(), "HandleSemanticSearch: filtering by document_id=%s", docFilter)
 		}
+	}
+
+	// Restrict results to readable documents. The placeholder offset depends on
+	// whether the optional document filter consumed $2, which is why
+	// VisibilityClause takes startIdx rather than hardcoding $1.
+	if !permissions.IsAdmin(r) {
+		userID := permissions.CurrentUserID(r)
+		if userID == "" {
+			logger.Logf(r.Context(), "HandleSemanticSearch: no authenticated user on request")
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		clause, clauseArgs := permissions.VisibilityClause(userID, len(args)+1, "d.")
+		conditions = append(conditions, clause)
+		args = append(args, clauseArgs...)
+	}
+
+	if len(conditions) > 0 {
+		sqlQuery += " WHERE " + strings.Join(conditions, " AND ")
 	}
 
 	sqlQuery += " ORDER BY p.embedding <=> $1 LIMIT 10"
@@ -1655,6 +1803,10 @@ func HandleDocumentSearchPreviewPDF(w http.ResponseWriter, r *http.Request) {
 
 	if q == "" {
 		http.Error(w, "missing query parameter 'q'", http.StatusBadRequest)
+		return
+	}
+
+	if !permissions.EnforceDocument(w, r, docID, permissions.PermRead) {
 		return
 	}
 
@@ -1996,6 +2148,10 @@ func HandleEmailBooklet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !enforceBookletAccess(w, r, bookletID, permissions.PermRead) {
+		return
+	}
+
 	type EmailRequest struct {
 		Email string `json:"email"`
 	}
@@ -2124,24 +2280,15 @@ func HandleGetBookletProgress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify that the booklet exists first
-	var exists bool
-	err := db.DB.QueryRow(`SELECT EXISTS(SELECT 1 FROM compiled_booklets WHERE id = $1)`, bookletID).Scan(&exists)
-	if err != nil {
-		logger.Logf(r.Context(), "Error: failed to check booklet existence: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if !exists {
-		logger.Logf(r.Context(), "HandleGetBookletProgress: booklet %s not found", bookletID)
-		http.Error(w, "booklet not found", http.StatusNotFound)
+	// Resolving the parent document also verifies the booklet exists.
+	if !enforceBookletAccess(w, r, bookletID, permissions.PermRead) {
 		return
 	}
 
 	var batchSize int
 	var completedSheetsStr string
 	var completedBatchesStr string
-	err = db.DB.QueryRow(`
+	err := db.DB.QueryRow(`
 		SELECT batch_size, completed_sheets, completed_batches
 		FROM booklet_print_progress
 		WHERE booklet_id = $1`, bookletID).Scan(&batchSize, &completedSheetsStr, &completedBatchesStr)
@@ -2190,17 +2337,9 @@ func HandleUpdateBookletProgress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify that the booklet exists first
-	var exists bool
-	err := db.DB.QueryRow(`SELECT EXISTS(SELECT 1 FROM compiled_booklets WHERE id = $1)`, bookletID).Scan(&exists)
-	if err != nil {
-		logger.Logf(r.Context(), "Error: failed to check booklet existence: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if !exists {
-		logger.Logf(r.Context(), "HandleUpdateBookletProgress: booklet %s not found", bookletID)
-		http.Error(w, "booklet not found", http.StatusNotFound)
+	// Progress is print state for the booklet, so it requires write on the parent.
+	// Resolving the parent document also verifies the booklet exists.
+	if !enforceBookletAccess(w, r, bookletID, permissions.PermWrite) {
 		return
 	}
 
@@ -2216,7 +2355,7 @@ func HandleUpdateBookletProgress(w http.ResponseWriter, r *http.Request) {
 		completedSheetsStr = string(req.CompletedSheets)
 	}
 
-	_, err = db.DB.Exec(`
+	_, err := db.DB.Exec(`
 		INSERT INTO booklet_print_progress (booklet_id, batch_size, completed_sheets, updated_at)
 		VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
 		ON CONFLICT (booklet_id)
