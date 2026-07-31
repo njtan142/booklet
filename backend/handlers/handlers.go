@@ -2097,14 +2097,15 @@ func HandleSMTPConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 type BookletProgressRequest struct {
-	BatchSize        int             `json:"batch_size"`
-	CompletedBatches json.RawMessage `json:"completed_batches"`
+	BatchSize       int             `json:"batch_size"`
+	CompletedSheets json.RawMessage `json:"completed_sheets"`
 }
 
 type BookletProgressResponse struct {
 	BookletID        string          `json:"booklet_id"`
 	BatchSize        int             `json:"batch_size"`
-	CompletedBatches json.RawMessage `json:"completed_batches"`
+	CompletedSheets  json.RawMessage `json:"completed_sheets"`
+	CompletedBatches json.RawMessage `json:"completed_batches,omitempty"`
 }
 
 // HandleGetBookletProgress gets the printing progress of a booklet.
@@ -2138,17 +2139,19 @@ func HandleGetBookletProgress(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var batchSize int
+	var completedSheetsStr string
 	var completedBatchesStr string
 	err = db.DB.QueryRow(`
-		SELECT batch_size, completed_batches
+		SELECT batch_size, completed_sheets, completed_batches
 		FROM booklet_print_progress
-		WHERE booklet_id = $1`, bookletID).Scan(&batchSize, &completedBatchesStr)
+		WHERE booklet_id = $1`, bookletID).Scan(&batchSize, &completedSheetsStr, &completedBatchesStr)
 
 	if err == sql.ErrNoRows {
 		// Return default progress
 		resp := BookletProgressResponse{
 			BookletID:        bookletID,
 			BatchSize:        10,
+			CompletedSheets:  json.RawMessage(`{}`),
 			CompletedBatches: json.RawMessage(`{}`),
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -2163,6 +2166,7 @@ func HandleGetBookletProgress(w http.ResponseWriter, r *http.Request) {
 	resp := BookletProgressResponse{
 		BookletID:        bookletID,
 		BatchSize:        batchSize,
+		CompletedSheets:  json.RawMessage(completedSheetsStr),
 		CompletedBatches: json.RawMessage(completedBatchesStr),
 	}
 
@@ -2207,17 +2211,17 @@ func HandleUpdateBookletProgress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	completedBatchesStr := "{}"
-	if len(req.CompletedBatches) > 0 {
-		completedBatchesStr = string(req.CompletedBatches)
+	completedSheetsStr := "{}"
+	if len(req.CompletedSheets) > 0 {
+		completedSheetsStr = string(req.CompletedSheets)
 	}
 
 	_, err = db.DB.Exec(`
-		INSERT INTO booklet_print_progress (booklet_id, batch_size, completed_batches, updated_at)
+		INSERT INTO booklet_print_progress (booklet_id, batch_size, completed_sheets, updated_at)
 		VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
 		ON CONFLICT (booklet_id)
-		DO UPDATE SET batch_size = EXCLUDED.batch_size, completed_batches = EXCLUDED.completed_batches, updated_at = CURRENT_TIMESTAMP`,
-		bookletID, req.BatchSize, completedBatchesStr)
+		DO UPDATE SET batch_size = EXCLUDED.batch_size, completed_sheets = EXCLUDED.completed_sheets, updated_at = CURRENT_TIMESTAMP`,
+		bookletID, req.BatchSize, completedSheetsStr)
 
 	if err != nil {
 		logger.Logf(r.Context(), "Error: failed to upsert booklet progress for %s: %v", bookletID, err)
