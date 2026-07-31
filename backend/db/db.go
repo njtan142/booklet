@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	_ "github.com/lib/pq"
 )
 
@@ -204,8 +205,274 @@ func runMigrations() error {
 		return fmt.Errorf("failed to create smtp_config table: %w", err)
 	}
 
+	// 6. Permission model: groups, membership, document ownership and mode bits
+	if err := migratePermissions(); err != nil {
+		return err
+	}
+
+	// 7. Job queue tables (consumed by the tool worker)
+	if err := migrateJobQueue(); err != nil {
+		return err
+	}
+
+	// 8. Idempotent backfill of ownership for pre-permission rows
+	if err := backfillOwnership(); err != nil {
+		return err
+	}
+
 	log.Println("Database migrations applied successfully.")
 	return nil
+}
+
+// Mode bit constants mirroring Unix rwx triples.
+const (
+	// ModeDefault is 0o644: owner rw-, group r--, other r--.
+	ModeDefault = 420
+	// ModeLegacy is 0o664: owner rw-, group rw-, other r--.
+	// Used for the backfill so existing shared documents stay writable.
+	ModeLegacy = 436
+)
+
+// SystemUserID owns every document created before the permission model existed.
+const SystemUserID = "system"
+
+// LegacyGroupName is the group that all pre-permission documents belong to.
+const LegacyGroupName = "legacy"
+
+// migratePermissions creates the group tables and adds ownership, lineage and
+// file-kind columns to documents.
+func migratePermissions() error {
+	log.Println("Creating groups and group_members tables...")
+	if _, err := DB.Exec(`
+		CREATE TABLE IF NOT EXISTS groups (
+			id UUID PRIMARY KEY,
+			name TEXT UNIQUE NOT NULL,
+			is_personal BOOLEAN NOT NULL DEFAULT FALSE,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+		);
+	`); err != nil {
+		return fmt.Errorf("failed to create groups table: %w", err)
+	}
+
+	if _, err := DB.Exec(`
+		CREATE TABLE IF NOT EXISTS group_members (
+			group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+			user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			joined_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (group_id, user_id)
+		);
+	`); err != nil {
+		return fmt.Errorf("failed to create group_members table: %w", err)
+	}
+	if _, err := DB.Exec(`CREATE INDEX IF NOT EXISTS idx_group_members_user ON group_members(user_id);`); err != nil {
+		return fmt.Errorf("failed to index group_members: %w", err)
+	}
+
+	if _, err := DB.Exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS primary_group_id UUID REFERENCES groups(id);`); err != nil {
+		return fmt.Errorf("failed to add users.primary_group_id: %w", err)
+	}
+
+	log.Println("Adding ownership, lineage and kind columns to documents...")
+	documentColumns := []string{
+		`ALTER TABLE documents ADD COLUMN IF NOT EXISTS owner_id TEXT REFERENCES users(id);`,
+		`ALTER TABLE documents ADD COLUMN IF NOT EXISTS group_id UUID REFERENCES groups(id);`,
+		fmt.Sprintf(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS mode SMALLINT NOT NULL DEFAULT %d;`, ModeDefault),
+		`ALTER TABLE documents ADD COLUMN IF NOT EXISTS derived_from_document_id UUID REFERENCES documents(id) ON DELETE SET NULL;`,
+		`ALTER TABLE documents ADD COLUMN IF NOT EXISTS derived_via_tool TEXT;`,
+		`ALTER TABLE documents ADD COLUMN IF NOT EXISTS derived_via_job_id UUID;`,
+		`ALTER TABLE documents ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'pdf';`,
+		`ALTER TABLE documents ADD COLUMN IF NOT EXISTS mime_type TEXT NOT NULL DEFAULT 'application/pdf';`,
+		`ALTER TABLE documents ADD COLUMN IF NOT EXISTS original_filename TEXT;`,
+		`ALTER TABLE documents ADD COLUMN IF NOT EXISTS is_encrypted BOOLEAN NOT NULL DEFAULT FALSE;`,
+		// Non-paginated rows (kind='source'/'export') carry no meaningful page count.
+		`ALTER TABLE documents ALTER COLUMN total_pages DROP NOT NULL;`,
+		`CREATE INDEX IF NOT EXISTS idx_documents_owner ON documents(owner_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_documents_derived_from ON documents(derived_from_document_id);`,
+	}
+	for _, stmt := range documentColumns {
+		if _, err := DB.Exec(stmt); err != nil {
+			return fmt.Errorf("failed to migrate documents (%s): %w", stmt, err)
+		}
+	}
+
+	return nil
+}
+
+// migrateJobQueue creates the Postgres-backed job queue consumed by the worker.
+func migrateJobQueue() error {
+	log.Println("Creating job queue tables...")
+	if _, err := DB.Exec(`
+		CREATE TABLE IF NOT EXISTS jobs (
+			id UUID PRIMARY KEY,
+			user_id TEXT NOT NULL REFERENCES users(id),
+			tool_slug TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'queued',
+			params JSONB NOT NULL DEFAULT '{}',
+			progress_current INT NOT NULL DEFAULT 0,
+			progress_total   INT NOT NULL DEFAULT 0,
+			progress_step TEXT,
+			error TEXT,
+			attempt INT NOT NULL DEFAULT 0,
+			max_attempts INT NOT NULL DEFAULT 3,
+			run_after TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+			locked_by TEXT,
+			heartbeat_at TIMESTAMP WITH TIME ZONE,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+			started_at TIMESTAMP WITH TIME ZONE,
+			completed_at TIMESTAMP WITH TIME ZONE
+		);
+	`); err != nil {
+		return fmt.Errorf("failed to create jobs table: %w", err)
+	}
+
+	jobIndexes := []string{
+		`CREATE INDEX IF NOT EXISTS idx_jobs_claim ON jobs(status, run_after) WHERE status = 'queued';`,
+		`CREATE INDEX IF NOT EXISTS idx_jobs_user ON jobs(user_id, created_at DESC);`,
+	}
+	for _, stmt := range jobIndexes {
+		if _, err := DB.Exec(stmt); err != nil {
+			return fmt.Errorf("failed to index jobs: %w", err)
+		}
+	}
+
+	if _, err := DB.Exec(`
+		CREATE TABLE IF NOT EXISTS job_inputs (
+			job_id UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+			document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+			position INT NOT NULL,
+			PRIMARY KEY (job_id, position)
+		);
+	`); err != nil {
+		return fmt.Errorf("failed to create job_inputs table: %w", err)
+	}
+
+	// UNIQUE (job_id, position) is deliberate: without it every output row could
+	// keep the default position = 0 and silently lose page order for the ordered
+	// multi-output tools (Split, PDF to JPG).
+	if _, err := DB.Exec(`
+		CREATE TABLE IF NOT EXISTS job_outputs (
+			job_id UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+			document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+			position INT NOT NULL DEFAULT 0,
+			PRIMARY KEY (job_id, document_id),
+			UNIQUE (job_id, position)
+		);
+	`); err != nil {
+		return fmt.Errorf("failed to create job_outputs table: %w", err)
+	}
+
+	return nil
+}
+
+// backfillOwnership assigns every ownerless document to the system user and the
+// legacy group with mode 0o664, so existing users keep read and write access.
+// Safe to run on every boot.
+func backfillOwnership() error {
+	if _, err := DB.Exec(`
+		INSERT INTO users (id, email, name, updated_at)
+		VALUES ($1, 'system@booklet.local', 'System', CURRENT_TIMESTAMP)
+		ON CONFLICT (id) DO NOTHING;
+	`, SystemUserID); err != nil {
+		return fmt.Errorf("failed to upsert system user: %w", err)
+	}
+
+	legacyGroupID, err := EnsureGroup(LegacyGroupName, false)
+	if err != nil {
+		return fmt.Errorf("failed to ensure legacy group: %w", err)
+	}
+
+	res, err := DB.Exec(`
+		UPDATE documents
+		SET owner_id = $1, group_id = $2, mode = $3
+		WHERE owner_id IS NULL;
+	`, SystemUserID, legacyGroupID, ModeLegacy)
+	if err != nil {
+		return fmt.Errorf("failed to backfill document ownership: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		log.Printf("Backfilled ownership for %d pre-permission documents.", n)
+	}
+
+	return nil
+}
+
+// EnsureGroup returns the id of the named group, creating it when absent.
+func EnsureGroup(name string, isPersonal bool) (string, error) {
+	var id string
+	err := DB.QueryRow(`SELECT id FROM groups WHERE name = $1`, name).Scan(&id)
+	if err == nil {
+		return id, nil
+	}
+	if err != sql.ErrNoRows {
+		return "", err
+	}
+
+	newID := uuid.New().String()
+	// ON CONFLICT covers a concurrent creator racing us between the SELECT and
+	// the INSERT; the RETURNING clause then yields nothing, so re-read.
+	err = DB.QueryRow(`
+		INSERT INTO groups (id, name, is_personal)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (name) DO NOTHING
+		RETURNING id;
+	`, newID, name, isPersonal).Scan(&id)
+	if err == sql.ErrNoRows {
+		if err := DB.QueryRow(`SELECT id FROM groups WHERE name = $1`, name).Scan(&id); err != nil {
+			return "", err
+		}
+		return id, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+// EnsurePersonalGroup creates the caller's personal group, adds them to it and
+// sets users.primary_group_id when it is not already set. Called on every login
+// so that pre-existing users are migrated lazily.
+func EnsurePersonalGroup(userID string) (string, error) {
+	var existing sql.NullString
+	if err := DB.QueryRow(`SELECT primary_group_id FROM users WHERE id = $1`, userID).Scan(&existing); err != nil {
+		return "", fmt.Errorf("failed to read primary group for %s: %w", userID, err)
+	}
+	if existing.Valid && existing.String != "" {
+		// Membership may still be missing if a previous run failed midway.
+		if _, err := DB.Exec(`
+			INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)
+			ON CONFLICT DO NOTHING;
+		`, existing.String, userID); err != nil {
+			return "", fmt.Errorf("failed to ensure group membership for %s: %w", userID, err)
+		}
+		return existing.String, nil
+	}
+
+	// Namespaced by user id so the unique group name can never collide with an
+	// admin-created group.
+	groupID, err := EnsureGroup("user:"+userID, true)
+	if err != nil {
+		return "", fmt.Errorf("failed to create personal group for %s: %w", userID, err)
+	}
+
+	if _, err := DB.Exec(`
+		INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)
+		ON CONFLICT DO NOTHING;
+	`, groupID, userID); err != nil {
+		return "", fmt.Errorf("failed to add %s to personal group: %w", userID, err)
+	}
+
+	if _, err := DB.Exec(`
+		UPDATE users SET primary_group_id = $1 WHERE id = $2 AND primary_group_id IS NULL;
+	`, groupID, userID); err != nil {
+		return "", fmt.Errorf("failed to set primary group for %s: %w", userID, err)
+	}
+
+	return groupID, nil
+}
+
+// PrimaryGroupID returns the caller's primary group, creating it if needed.
+func PrimaryGroupID(userID string) (string, error) {
+	return EnsurePersonalGroup(userID)
 }
 
 // Float32ArrayToString converts a slice of floats to pgvector string format (e.g. "[0.1,0.2,0.3]")
