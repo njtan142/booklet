@@ -1,5 +1,4 @@
-import React, { useState } from "react"
-import { Button } from "../ui/button"
+import React from "react"
 import { Input } from "../ui/input"
 import { ScrollArea } from "../ui/scroll-area"
 import {
@@ -9,11 +8,11 @@ import {
   DialogTitle,
   DialogDescription,
 } from "../ui/dialog"
-import { FileText, Loader2, Pencil, Search, Trash2 } from "lucide-react"
+import { Loader2, Search } from "lucide-react"
 import type { DocumentInfo } from "../../api"
 import type { FailedUpload } from "./useDocumentUploads"
-import { DocumentStatusIcon, documentProgressLabel } from "./documentStatus"
 import { FailedDocumentRow } from "./LibraryPanel"
+import { DocumentCard } from "./DocumentCard"
 
 type LibraryDialogProps = {
   open: boolean
@@ -48,40 +47,6 @@ export const LibraryDialog: React.FC<LibraryDialogProps> = ({
   onRename,
   onDelete,
 }) => {
-  const [renamingDocId, setRenamingDocId] = useState<string | null>(null)
-  const [renameInput, setRenameInput] = useState<string>("")
-
-  const startRename = (doc: DocumentInfo) => {
-    setRenamingDocId(doc.id)
-    setRenameInput(doc.name)
-  }
-
-  const commitRename = (docId: string) => {
-    const trimmed = renameInput.trim()
-    if (trimmed && trimmed !== documents.find((d) => d.id === docId)?.name) {
-      onRename(docId, trimmed)
-    }
-    setRenamingDocId(null)
-    setRenameInput("")
-  }
-
-  const handleRenameKeyDown = (docId: string, e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
-      e.preventDefault()
-      commitRename(docId)
-    } else if (e.key === "Escape") {
-      e.preventDefault()
-      setRenamingDocId(null)
-      setRenameInput("")
-    }
-  }
-
-  const handleDelete = (doc: DocumentInfo) => {
-    if (window.confirm(`Delete "${doc.name}"? This cannot be undone.`)) {
-      onDelete(doc.id)
-    }
-  }
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl glass">
@@ -132,83 +97,16 @@ export const LibraryDialog: React.FC<LibraryDialogProps> = ({
                     )
                   }
 
-                  const isBusy = doc.status === "processing" || doc.status === "queued"
-                  const isRenaming = renamingDocId === doc.id
-
                   return (
-                    <div key={doc.id} className="relative group">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        onClick={() => {
-                          if (doc.status === "ready") {
-                            onSelectDocument(doc.id)
-                            onOpenChange(false)
-                          }
-                        }}
-                        disabled={doc.status !== "ready"}
-                        className={`w-full text-left h-auto p-3.5 rounded-xl border flex flex-col gap-2 cursor-pointer transition-all whitespace-normal ${
-                          isSelected
-                            ? "bg-primary/10 border-primary/30"
-                            : isBusy
-                              ? "bg-muted/30 border-border opacity-60 cursor-not-allowed"
-                              : "bg-background/60 border-border hover:border-primary/25"
-                        }`}
-                      >
-                        <div className="flex items-center gap-3 min-w-0 w-full">
-                          <div className={`p-2 rounded-lg shrink-0 ${isSelected ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"}`}>
-                            <FileText className="h-4 w-4" aria-hidden="true" />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            {isRenaming ? (
-                              <Input
-                                type="text"
-                                className="h-5 text-xs"
-                                value={renameInput}
-                                onChange={(e) => setRenameInput(e.target.value)}
-                                onBlur={() => commitRename(doc.id)}
-                                onKeyDown={(e) => handleRenameKeyDown(doc.id, e)}
-                                autoFocus
-                                onClick={(e) => e.stopPropagation()}
-                              />
-                            ) : (
-                              <h4 className="text-xs font-bold text-foreground truncate m-0" title={doc.name}>
-                                {doc.name}
-                              </h4>
-                            )}
-                          </div>
-                        </div>
-
-                        <p className="text-[10px] text-muted-foreground mt-0.5">
-                          {documentProgressLabel(doc, true)}
-                        </p>
-                      </Button>
-
-                      <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6"
-                          onClick={() => startRename(doc)}
-                          disabled={isBusy}
-                          aria-label={`Rename ${doc.name}`}
-                        >
-                          <Pencil className="h-3 w-3" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6 text-destructive hover:text-destructive hover:bg-destructive/15"
-                          onClick={() => handleDelete(doc)}
-                          disabled={isBusy}
-                          aria-label={`Delete ${doc.name}`}
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    </div>
+                    <DocumentCard
+                      key={doc.id}
+                      doc={doc}
+                      isSelected={isSelected}
+                      onSelectDocument={onSelectDocument}
+                      onOpenChange={onOpenChange}
+                      onRename={onRename}
+                      onDelete={onDelete}
+                    />
                   )
                 })}
               </div>
