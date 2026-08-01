@@ -179,8 +179,37 @@ func (t *Tool) CheckArity(n int) error {
 }
 
 // reset clears the registry. Test-only.
+//
+// The registry is process-wide and populated by each tool's init(), so a test
+// that clears it would strand every later test in the package with an empty
+// catalog. The first clear snapshots the init-time contents so restore() can
+// put them back.
 func reset() {
 	mu.Lock()
 	defer mu.Unlock()
+
+	if baseline == nil {
+		baseline = make(map[string]*Tool, len(registry))
+		for slug, tool := range registry {
+			baseline[slug] = tool
+		}
+	}
 	registry = map[string]*Tool{}
 }
+
+// restore returns the registry to its init-time contents. Test-only; pair it
+// with t.Cleanup in any test that calls reset().
+func restore() {
+	mu.Lock()
+	defer mu.Unlock()
+
+	if baseline == nil {
+		return
+	}
+	registry = make(map[string]*Tool, len(baseline))
+	for slug, tool := range baseline {
+		registry[slug] = tool
+	}
+}
+
+var baseline map[string]*Tool

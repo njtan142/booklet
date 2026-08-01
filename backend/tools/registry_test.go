@@ -12,7 +12,7 @@ import (
 func noopRun(context.Context, *jobs.Job, *jobs.Reporter) error { return nil }
 
 func TestRegisterAppliesDefaults(t *testing.T) {
-	t.Cleanup(reset)
+	t.Cleanup(restore)
 	reset()
 
 	// MinInputs 0 and an empty InputKinds are the zero values a registration is
@@ -33,7 +33,7 @@ func TestRegisterAppliesDefaults(t *testing.T) {
 }
 
 func TestRegisterPanicsOnDuplicateSlug(t *testing.T) {
-	t.Cleanup(reset)
+	t.Cleanup(restore)
 	reset()
 
 	Register(&Tool{Slug: "merge", Run: noopRun})
@@ -47,7 +47,7 @@ func TestRegisterPanicsOnDuplicateSlug(t *testing.T) {
 }
 
 func TestRegisterPanicsOnEmptySlug(t *testing.T) {
-	t.Cleanup(reset)
+	t.Cleanup(restore)
 	reset()
 
 	defer func() {
@@ -59,7 +59,7 @@ func TestRegisterPanicsOnEmptySlug(t *testing.T) {
 }
 
 func TestGetUnknownSlug(t *testing.T) {
-	t.Cleanup(reset)
+	t.Cleanup(restore)
 	reset()
 
 	if _, ok := Get("does-not-exist"); ok {
@@ -68,7 +68,7 @@ func TestGetUnknownSlug(t *testing.T) {
 }
 
 func TestListIsSortedBySlug(t *testing.T) {
-	t.Cleanup(reset)
+	t.Cleanup(restore)
 	reset()
 
 	Register(&Tool{Slug: "rotate", Run: noopRun})
@@ -90,7 +90,7 @@ func TestListIsSortedBySlug(t *testing.T) {
 }
 
 func TestAvailableSkipsUnimplementedAndUnreachable(t *testing.T) {
-	t.Cleanup(reset)
+	t.Cleanup(restore)
 	reset()
 
 	Register(&Tool{Slug: "implemented", Run: noopRun})
@@ -160,7 +160,7 @@ func TestAcceptsKind(t *testing.T) {
 }
 
 func TestValidateHookRejectsBadParams(t *testing.T) {
-	t.Cleanup(reset)
+	t.Cleanup(restore)
 	reset()
 
 	Register(&Tool{
