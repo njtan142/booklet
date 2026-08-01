@@ -213,6 +213,12 @@ export const api = {
 
   deleteDocument: (id: string) =>
     apiFetch<void>(`/documents/${id}/delete`, { method: "POST" }),
+
+  bulkDeleteDocuments: (ids: string[]) =>
+    apiFetch<{ deleted_count: number; deleted_ids: string[] }>("/documents/bulk-delete", {
+      method: "POST",
+      body: JSON.stringify({ ids }),
+    }),
   
   uploadDocument: async (file: File): Promise<{ document_id: string }> => {
     const formData = new FormData();

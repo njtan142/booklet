@@ -263,6 +263,140 @@ func HandleDeleteDocument(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+type BulkDeleteRequest struct {
+	IDs []string `json:"ids"`
+}
+
+type BulkDeleteResponse struct {
+	DeletedCount int      `json:"deleted_count"`
+	DeletedIDs   []string `json:"deleted_ids"`
+}
+
+func HandleBulkDeleteDocuments(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		logger.Logf(r.Context(), "HandleBulkDeleteDocuments: method %s not allowed", r.Method)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req BulkDeleteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		logger.Logf(r.Context(), "HandleBulkDeleteDocuments: failed to decode body: %v", err)
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if len(req.IDs) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(BulkDeleteResponse{DeletedCount: 0, DeletedIDs: []string{}})
+		return
+	}
+
+	var validIDs []string
+	for _, id := range req.IDs {
+		trimmed := strings.TrimSpace(id)
+		if trimmed != "" {
+			if _, err := uuid.Parse(trimmed); err == nil {
+				validIDs = append(validIDs, trimmed)
+			}
+		}
+	}
+
+	if len(validIDs) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(BulkDeleteResponse{DeletedCount: 0, DeletedIDs: []string{}})
+		return
+	}
+
+	ctx := r.Context()
+	var targetIDs []string
+
+	if permissions.IsAdmin(r) {
+		targetIDs = validIDs
+	} else {
+		userID := permissions.CurrentUserID(r)
+		if userID == "" {
+			logger.Logf(ctx, "HandleBulkDeleteDocuments: unauthorized")
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		_, denied, err := permissions.CheckMany(ctx, validIDs, userID, permissions.PermWrite)
+		if err != nil {
+			logger.Logf(ctx, "HandleBulkDeleteDocuments: permission check failed: %v", err)
+			http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		deniedMap := make(map[string]bool)
+		for _, d := range denied {
+			deniedMap[d] = true
+		}
+		for _, id := range validIDs {
+			if !deniedMap[id] {
+				targetIDs = append(targetIDs, id)
+			}
+		}
+	}
+
+	if len(targetIDs) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(BulkDeleteResponse{DeletedCount: 0, DeletedIDs: []string{}})
+		return
+	}
+
+	var deletedIDs []string
+	for _, docID := range targetIDs {
+		var originalStoragePath string
+		err := db.DB.QueryRowContext(ctx, `SELECT original_storage_path FROM documents WHERE id = $1`, docID).Scan(&originalStoragePath)
+		if err == sql.ErrNoRows {
+			continue
+		} else if err != nil {
+			logger.Logf(ctx, "HandleBulkDeleteDocuments: failed to query doc %s: %v", docID, err)
+			continue
+		}
+
+		pageRows, err := db.DB.QueryContext(ctx, `SELECT storage_path FROM document_pages WHERE document_id = $1`, docID)
+		var pagePaths []string
+		if err == nil {
+			for pageRows.Next() {
+				var p string
+				if scanErr := pageRows.Scan(&p); scanErr == nil && p != "" {
+					pagePaths = append(pagePaths, p)
+				}
+			}
+			pageRows.Close()
+		}
+
+		_, _ = db.DB.ExecContext(ctx, `DELETE FROM document_pages WHERE document_id = $1`, docID)
+		_, _ = db.DB.ExecContext(ctx, `DELETE FROM compiled_booklets WHERE document_id = $1`, docID)
+		_, err = db.DB.ExecContext(ctx, `DELETE FROM documents WHERE id = $1`, docID)
+		if err != nil {
+			logger.Logf(ctx, "HandleBulkDeleteDocuments: failed to delete doc %s: %v", docID, err)
+			continue
+		}
+
+		if originalStoragePath != "" {
+			if err := storage.DeleteFile(ctx, originalStoragePath); err != nil {
+				logger.Logf(ctx, "Warning: failed to delete original file %s for document %s: %v", originalStoragePath, docID, err)
+			}
+		}
+		for _, p := range pagePaths {
+			if err := storage.DeleteFile(ctx, p); err != nil {
+				logger.Logf(ctx, "Warning: failed to delete page file %s for document %s: %v", p, docID, err)
+			}
+		}
+
+		deletedIDs = append(deletedIDs, docID)
+	}
+
+	logger.Logf(ctx, "HandleBulkDeleteDocuments: deleted %d documents", len(deletedIDs))
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(BulkDeleteResponse{
+		DeletedCount: len(deletedIDs),
+		DeletedIDs:   deletedIDs,
+	})
+}
+
+
 func HandleDismissDocument(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		logger.Logf(r.Context(), "HandleDismissDocument: method %s not allowed", r.Method)

@@ -109,6 +109,7 @@ func main() {
 	mux.Handle("/api/documents/upload", auth.RequireAuth(handlers.InstrumentHandler("/api/documents/upload", handlers.HandleUploadDocument)))
 	mux.Handle("/api/documents/{id}/pages/{page_number}/pdf", auth.RequireAuth(handlers.InstrumentHandler("/api/documents/{id}/pages/{page_number}/pdf", handlers.HandleGetPagePDF)))
 
+	mux.Handle("/api/documents/bulk-delete", auth.RequireAuth(handlers.InstrumentHandler("/api/documents/bulk-delete", handlers.HandleBulkDeleteDocuments)))
 	mux.Handle("/api/documents/{id}/rename", auth.RequireAuth(handlers.InstrumentHandler("/api/documents/{id}/rename", handlers.HandleRenameDocument)))
 	mux.Handle("/api/documents/{id}/delete", auth.RequireAuth(handlers.InstrumentHandler("/api/documents/{id}/delete", handlers.HandleDeleteDocument)))
 
