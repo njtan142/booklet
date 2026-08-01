@@ -39,6 +39,7 @@ export const Dashboard: React.FC = () => {
   // Documents ticked for a tool run. Kept separate from selectedDocId, which
   // drives the booklet panel and is a single document by nature.
   const [checkedDocIds, setCheckedDocIds] = useState<string[]>([])
+  const [lastClickedDocId, setLastClickedDocId] = useState<string | null>(null)
 
   const { data: rawDocuments, isLoading: loadingDocs } = useQuery({
     queryKey: ["documents"],
@@ -79,10 +80,54 @@ export const Dashboard: React.FC = () => {
     [documents, checkedDocIds]
   )
 
-  const toggleChecked = (docId: string, checked: boolean) => {
+  // Reset anchor start point whenever selection becomes empty
+  useEffect(() => {
+    if (checkedDocIds.length === 0) {
+      setLastClickedDocId(null)
+    }
+  }, [checkedDocIds])
+
+  const handleSelectDocument = (docId: string) => {
+    setSelectedDocId(docId)
+    setLastClickedDocId(docId)
+  }
+
+  const toggleChecked = (docId: string, checked: boolean, shiftKey?: boolean) => {
+    if (shiftKey && lastClickedDocId && lastClickedDocId !== docId) {
+      const visibleIds = filteredDocuments.map((d) => d.id)
+      const startIndex = visibleIds.indexOf(lastClickedDocId)
+      const endIndex = visibleIds.indexOf(docId)
+
+      if (startIndex !== -1 && endIndex !== -1) {
+        const min = Math.min(startIndex, endIndex)
+        const max = Math.max(startIndex, endIndex)
+        const rangeIds = visibleIds.slice(min, max + 1)
+
+        setCheckedDocIds((current) => {
+          const nextSet = new Set(current)
+          for (const id of rangeIds) {
+            nextSet.add(id)
+          }
+          return Array.from(nextSet)
+        })
+        setLastClickedDocId(docId)
+        return
+      }
+    }
+
+    setLastClickedDocId(docId)
     setCheckedDocIds((current) =>
-      checked ? [...current, docId] : current.filter((id) => id !== docId)
+      checked ? [...current.filter((id) => id !== docId), docId] : current.filter((id) => id !== docId)
     )
+  }
+
+  const toggleSelectAll = (docIds: string[]) => {
+    const allChecked = docIds.every((id) => checkedDocIds.includes(id))
+    if (allChecked) {
+      setCheckedDocIds((current) => current.filter((id) => !docIds.includes(id)))
+    } else {
+      setCheckedDocIds((current) => Array.from(new Set([...current, ...docIds])))
+    }
   }
 
   const { data: docDetail } = useQuery({
@@ -172,6 +217,22 @@ export const Dashboard: React.FC = () => {
     },
     onError: (err: any) => {
       alert(`Failed to delete document: ${err.message}`)
+    },
+  })
+
+  const bulkDeleteMutation = useMutation({
+    mutationFn: (ids: string[]) => api.bulkDeleteDocuments(ids),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["documents"] })
+      queryClient.invalidateQueries({ queryKey: ["booklets"] })
+      setCheckedDocIds((current) => current.filter((id) => !variables.includes(id)))
+      if (selectedDocId && variables.includes(selectedDocId)) {
+        setSelectedDocId(null)
+        setActiveBookletId(null)
+      }
+    },
+    onError: (err: any) => {
+      alert(`Failed to delete documents: ${err.message}`)
     },
   })
 
@@ -278,9 +339,12 @@ export const Dashboard: React.FC = () => {
           searchQuery={searchQuery}
           onSearchQueryChange={setSearchQuery}
           selectedDocId={selectedDocId}
-          onSelectDocument={setSelectedDocId}
+          onSelectDocument={handleSelectDocument}
           checkedDocIds={checkedDocIds}
           onToggleChecked={toggleChecked}
+          onSelectAll={toggleSelectAll}
+          onBulkDelete={(ids) => bulkDeleteMutation.mutate(ids)}
+          isBulkDeleting={bulkDeleteMutation.isPending}
           failedUploads={failedUploads}
           onResume={(docId) => resumeMutation.mutate(docId)}
           onDismissFailure={dismissFailedUpload}
@@ -319,7 +383,12 @@ export const Dashboard: React.FC = () => {
         searchQuery={modalSearchQuery}
         onSearchQueryChange={setModalSearchQuery}
         selectedDocId={selectedDocId}
-        onSelectDocument={setSelectedDocId}
+        onSelectDocument={handleSelectDocument}
+        checkedDocIds={checkedDocIds}
+        onToggleChecked={toggleChecked}
+        onSelectAll={toggleSelectAll}
+        onBulkDelete={(ids) => bulkDeleteMutation.mutate(ids)}
+        isBulkDeleting={bulkDeleteMutation.isPending}
         failedUploads={failedUploads}
         onResume={(docId) => resumeMutation.mutate(docId)}
         onDismissFailure={dismissFailedUpload}
@@ -327,7 +396,11 @@ export const Dashboard: React.FC = () => {
         onDelete={(docId) => deleteMutation.mutate(docId)}
       />
 
-      <ToolActionBar selection={checkedDocuments} onClear={() => setCheckedDocIds([])} />
+      <ToolActionBar
+        selection={checkedDocuments}
+        onClear={() => setCheckedDocIds([])}
+        onBulkDelete={(ids) => bulkDeleteMutation.mutate(ids)}
+      />
     </div>
   )
 }
