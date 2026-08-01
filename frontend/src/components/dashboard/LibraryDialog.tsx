@@ -11,7 +11,7 @@ import {
 import { Loader2, Search } from "lucide-react"
 import type { DocumentInfo } from "../../api"
 import type { FailedUpload } from "./useDocumentUploads"
-import { FailedDocumentRow } from "./LibraryPanel"
+import { FailedDocumentRow } from "./FailedDocumentRow"
 import { DocumentCard } from "./DocumentCard"
 
 type LibraryDialogProps = {

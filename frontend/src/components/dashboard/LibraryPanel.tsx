@@ -1,66 +1,14 @@
-import React, { useState } from "react"
+import React from "react"
 import { Button } from "../ui/button"
-import { Card } from "../ui/card"
-import { Checkbox } from "../ui/checkbox"
 import { Input } from "../ui/input"
 import { ScrollArea } from "../ui/scroll-area"
-import { FileText, Loader2, Pencil, Search, Trash2 } from "lucide-react"
+import { Loader2, Search } from "lucide-react"
 import type { DocumentInfo } from "../../api"
 import type { FailedUpload } from "./useDocumentUploads"
-import { DocumentStatusIcon, documentProgressLabel } from "./documentStatus"
+import { FailedDocumentRow } from "./FailedDocumentRow"
+import { LibraryDocumentRow } from "./LibraryDocumentRow"
 
-type FailedDocumentRowProps = {
-  doc: DocumentInfo
-  message: string
-  layout: "row" | "card"
-  onResume: () => void
-  onDismiss: () => void
-}
-
-// A document that failed offers Resume and Dismiss instead of selection: it has
-// no pages to act on, so neither the booklet panel nor a tool can use it.
-export const FailedDocumentRow: React.FC<FailedDocumentRowProps> = ({
-  doc,
-  message,
-  layout,
-  onResume,
-  onDismiss,
-}) => (
-  <div
-    className={
-      layout === "row"
-        ? "w-full text-left h-auto p-3.5 rounded-xl border flex items-center justify-between gap-4 bg-destructive/10 border-destructive/25"
-        : "w-full text-left p-3.5 rounded-xl border flex flex-col justify-between gap-3 bg-destructive/10 border-destructive/25"
-    }
-  >
-    <div className={`flex gap-3 min-w-0 ${layout === "row" ? "items-center" : "items-start"}`}>
-      <Card className="p-2 rounded-lg bg-destructive/15 text-destructive border-none shadow-none shrink-0">
-        <FileText className="h-4 w-4" aria-hidden="true" />
-      </Card>
-      <div className="min-w-0">
-        <h4 className="text-xs font-bold text-foreground truncate m-0" title={doc.name}>
-          {doc.name}
-        </h4>
-        <p className="text-[10px] text-destructive/80 mt-0.5 leading-normal">{message}</p>
-      </div>
-    </div>
-
-    <div className={`flex items-center gap-1.5 shrink-0 ${layout === "card" ? "self-end" : ""}`}>
-      <Button type="button" variant="outline" size="sm" className="h-8 text-[11px]" onClick={onResume}>
-        Resume
-      </Button>
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        className="h-8 text-[11px] text-destructive hover:text-destructive hover:bg-destructive/15"
-        onClick={onDismiss}
-      >
-        Dismiss
-      </Button>
-    </div>
-  </div>
-)
+export { FailedDocumentRow } from "./FailedDocumentRow"
 
 type LibraryPanelProps = {
   documents: DocumentInfo[]
@@ -97,40 +45,6 @@ export const LibraryPanel: React.FC<LibraryPanelProps> = ({
   onRename,
   onDelete,
 }) => {
-  const [renamingDocId, setRenamingDocId] = useState<string | null>(null)
-  const [renameInput, setRenameInput] = useState<string>("")
-
-  const startRename = (doc: DocumentInfo) => {
-    setRenamingDocId(doc.id)
-    setRenameInput(doc.name)
-  }
-
-  const commitRename = (docId: string) => {
-    const trimmed = renameInput.trim()
-    if (trimmed && trimmed !== documents.find((d) => d.id === docId)?.name) {
-      onRename(docId, trimmed)
-    }
-    setRenamingDocId(null)
-    setRenameInput("")
-  }
-
-  const handleRenameKeyDown = (docId: string, e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
-      e.preventDefault()
-      commitRename(docId)
-    } else if (e.key === "Escape") {
-      e.preventDefault()
-      setRenamingDocId(null)
-      setRenameInput("")
-    }
-  }
-
-  const handleDelete = (doc: DocumentInfo) => {
-    if (window.confirm(`Delete "${doc.name}"? This cannot be undone.`)) {
-      onDelete(doc.id)
-    }
-  }
-
   return (
     <div className="glass p-6 rounded-2xl border-border space-y-4">
       <div className="flex items-center justify-between">
@@ -186,92 +100,17 @@ export const LibraryPanel: React.FC<LibraryPanelProps> = ({
                     )
                   }
 
-                  const isBusy = doc.status === "processing" || doc.status === "queued"
-                  const isRenaming = renamingDocId === doc.id
-
                   return (
-                    <div key={doc.id} className="flex items-center gap-2 group">
-                      {/* Sibling of the row button, not a child: nesting an
-                          interactive control inside a button is invalid and the
-                          click would be swallowed by the row. */}
-                      <Checkbox
-                        id={`select-${doc.id}`}
-                        checked={checkedDocIds.includes(doc.id)}
-                        onCheckedChange={(checked) => onToggleChecked(doc.id, checked === true)}
-                        disabled={doc.status !== "ready"}
-                        aria-label={`Select ${doc.name} for a tool`}
-                      />
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        onClick={() => doc.status === "ready" && onSelectDocument(doc.id)}
-                        disabled={doc.status !== "ready"}
-                        className={`flex-1 min-w-0 text-left h-auto p-3.5 rounded-xl border flex items-center justify-between gap-4 transition-all whitespace-normal ${
-                          isSelected
-                            ? "bg-primary/10 border-primary/30"
-                            : isBusy
-                              ? "bg-muted/30 border-border opacity-60 cursor-not-allowed"
-                              : "bg-background/60 border-border hover:border-primary/25"
-                        }`}
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className={`p-2 rounded-lg ${isSelected ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"}`}>
-                            <FileText className="h-4 w-4" aria-hidden="true" />
-                          </div>
-                          <div className="min-w-0">
-                            {isRenaming ? (
-                              <Input
-                                type="text"
-                                className="h-5 text-xs"
-                                value={renameInput}
-                                onChange={(e) => setRenameInput(e.target.value)}
-                                onBlur={() => commitRename(doc.id)}
-                                onKeyDown={(e) => handleRenameKeyDown(doc.id, e)}
-                                autoFocus
-                              />
-                            ) : (
-                              <>
-                                <h4 className="text-xs font-bold text-foreground truncate m-0" title={doc.name}>
-                                  {doc.name}
-                                </h4>
-                                <p className="text-[10px] text-muted-foreground mt-0.5">
-                                  {documentProgressLabel(doc)}
-                                </p>
-                              </>
-                            )}
-                          </div>
-                        </div>
-
-                        <div>
-                          <DocumentStatusIcon status={doc.status} />
-                        </div>
-                      </Button>
-
-                      <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          onClick={() => startRename(doc)}
-                          disabled={isBusy}
-                          aria-label={`Rename ${doc.name}`}
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/15"
-                          onClick={() => handleDelete(doc)}
-                          disabled={isBusy}
-                          aria-label={`Delete ${doc.name}`}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    </div>
+                    <LibraryDocumentRow
+                      key={doc.id}
+                      doc={doc}
+                      isSelected={isSelected}
+                      isChecked={checkedDocIds.includes(doc.id)}
+                      onToggleChecked={onToggleChecked}
+                      onSelectDocument={onSelectDocument}
+                      onRename={onRename}
+                      onDelete={onDelete}
+                    />
                   )
                 })}
               </div>
