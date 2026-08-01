@@ -18,3 +18,4 @@
 1. Stop oververifying things 
 2. You're on windows so stop using linux commands
 3. dont run docker commands unless i say so
+4. When i say commit incrementally, do it by feature or content, not by file because thats way too naive
