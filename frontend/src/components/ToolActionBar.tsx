@@ -13,11 +13,13 @@ import {
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu"
 import { ToolDialog } from "./ToolDialog"
-import { AlertCircle, Loader2, Wrench, X } from "lucide-react"
+import { AlertCircle, Loader2, Trash2, Wrench, X } from "lucide-react"
+import { DeleteConfirmationDialog } from "./dashboard/DeleteConfirmationDialog"
 
 type ToolActionBarProps = {
   selection: DocumentInfo[]
   onClear: () => void
+  onBulkDelete?: (ids: string[]) => void
 }
 
 type FinishedJob = {
@@ -27,12 +29,13 @@ type FinishedJob = {
   error?: string
 }
 
-export const ToolActionBar: React.FC<ToolActionBarProps> = ({ selection, onClear }) => {
+export const ToolActionBar: React.FC<ToolActionBarProps> = ({ selection, onClear, onBulkDelete }) => {
   const queryClient = useQueryClient()
   const [activeJobIds, setActiveJobIds] = useState<string[]>([])
   const [finishedJobs, setFinishedJobs] = useState<FinishedJob[]>([])
   const [submitError, setSubmitError] = useState<string>("")
   const [configuringTool, setConfiguringTool] = useState<Tool | null>(null)
+  const [showConfirmDelete, setShowConfirmDelete] = useState<boolean>(false)
 
   // The catalog only lists tools that are implemented and whose engine is
   // reachable, so it is safe to offer everything it returns.
@@ -216,6 +219,19 @@ export const ToolActionBar: React.FC<ToolActionBarProps> = ({ selection, onClear
               </DropdownMenuContent>
             </DropdownMenu>
 
+            {onBulkDelete && (
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                className="h-8 gap-1 text-xs font-semibold"
+                onClick={() => setShowConfirmDelete(true)}
+              >
+                <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                Delete
+              </Button>
+            )}
+
             <Button
               type="button"
               variant="ghost"
@@ -241,6 +257,17 @@ export const ToolActionBar: React.FC<ToolActionBarProps> = ({ selection, onClear
             const tool = configuringTool
             setConfiguringTool(null)
             runTool(tool, params)
+          }}
+        />
+      )}
+
+      {onBulkDelete && (
+        <DeleteConfirmationDialog
+          open={showConfirmDelete}
+          onOpenChange={setShowConfirmDelete}
+          count={selection.length}
+          onConfirm={() => {
+            onBulkDelete(selection.map((d) => d.id))
           }}
         />
       )}

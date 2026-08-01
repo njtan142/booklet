@@ -1,4 +1,6 @@
-import React from "react"
+import React, { useState } from "react"
+import { Button } from "../ui/button"
+import { Checkbox } from "../ui/checkbox"
 import { Input } from "../ui/input"
 import { ScrollArea } from "../ui/scroll-area"
 import {
@@ -8,11 +10,12 @@ import {
   DialogTitle,
   DialogDescription,
 } from "../ui/dialog"
-import { Loader2, Search } from "lucide-react"
+import { Loader2, Search, Trash2 } from "lucide-react"
 import type { DocumentInfo } from "../../api"
 import type { FailedUpload } from "./useDocumentUploads"
 import { FailedDocumentRow } from "./FailedDocumentRow"
 import { DocumentCard } from "./DocumentCard"
+import { DeleteConfirmationDialog } from "./DeleteConfirmationDialog"
 
 type LibraryDialogProps = {
   open: boolean
@@ -24,6 +27,11 @@ type LibraryDialogProps = {
   onSearchQueryChange: (value: string) => void
   selectedDocId: string | null
   onSelectDocument: (docId: string) => void
+  checkedDocIds?: string[]
+  onToggleChecked?: (docId: string, checked: boolean, shiftKey?: boolean) => void
+  onSelectAll?: (docIds: string[]) => void
+  onBulkDelete?: (ids: string[]) => void
+  isBulkDeleting?: boolean
   failedUploads: FailedUpload[]
   onResume: (docId: string) => void
   onDismissFailure: (id: string) => void
@@ -41,19 +49,30 @@ export const LibraryDialog: React.FC<LibraryDialogProps> = ({
   onSearchQueryChange,
   selectedDocId,
   onSelectDocument,
+  checkedDocIds = [],
+  onToggleChecked,
+  onSelectAll,
+  onBulkDelete,
+  isBulkDeleting = false,
   failedUploads,
   onResume,
   onDismissFailure,
   onRename,
   onDelete,
 }) => {
+  const [showConfirmDelete, setShowConfirmDelete] = useState(false)
+
+  const readyFilteredIds = filteredDocuments.filter((d) => d.status === "ready").map((d) => d.id)
+  const isAllSelected =
+    readyFilteredIds.length > 0 && readyFilteredIds.every((id) => checkedDocIds.includes(id))
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl glass">
         <DialogHeader>
           <DialogTitle>Document Library</DialogTitle>
           <DialogDescription>
-            Select an uploaded document to configure booklet imposition parameters.
+            Select an uploaded document to configure booklet imposition parameters or select multiple to manage.
           </DialogDescription>
         </DialogHeader>
 
@@ -68,6 +87,32 @@ export const LibraryDialog: React.FC<LibraryDialogProps> = ({
               onChange={(e) => onSearchQueryChange(e.target.value)}
             />
           </div>
+
+          {filteredDocuments.length > 0 && onSelectAll && (
+            <div className="flex items-center justify-between pt-1 pb-1 px-1 border-b border-border/50 text-xs text-muted-foreground">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <Checkbox
+                  checked={isAllSelected}
+                  onCheckedChange={() => onSelectAll(readyFilteredIds)}
+                  aria-label="Select all documents"
+                />
+                <span>Select All ({readyFilteredIds.length})</span>
+              </label>
+
+              {checkedDocIds.length > 0 && onBulkDelete && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowConfirmDelete(true)}
+                  className="h-7 px-2 text-xs text-destructive hover:text-destructive hover:bg-destructive/15 gap-1 font-semibold"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Delete ({checkedDocIds.length})
+                </Button>
+              )}
+            </div>
+          )}
 
           {loading ? (
             <div className="flex items-center justify-center py-12">
@@ -102,6 +147,8 @@ export const LibraryDialog: React.FC<LibraryDialogProps> = ({
                       key={doc.id}
                       doc={doc}
                       isSelected={isSelected}
+                      isChecked={checkedDocIds.includes(doc.id)}
+                      onToggleChecked={onToggleChecked}
                       onSelectDocument={onSelectDocument}
                       onOpenChange={onOpenChange}
                       onRename={onRename}
@@ -113,7 +160,18 @@ export const LibraryDialog: React.FC<LibraryDialogProps> = ({
             </ScrollArea>
           )}
         </div>
+
+        {onBulkDelete && (
+          <DeleteConfirmationDialog
+            open={showConfirmDelete}
+            onOpenChange={setShowConfirmDelete}
+            count={checkedDocIds.length}
+            onConfirm={() => onBulkDelete(checkedDocIds)}
+            isDeleting={isBulkDeleting}
+          />
+        )}
       </DialogContent>
     </Dialog>
   )
 }
+

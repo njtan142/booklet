@@ -10,7 +10,7 @@ export type LibraryDocumentRowProps = {
   doc: DocumentInfo
   isSelected: boolean
   isChecked: boolean
-  onToggleChecked: (docId: string, checked: boolean) => void
+  onToggleChecked: (docId: string, checked: boolean, shiftKey?: boolean) => void
   onSelectDocument: (docId: string) => void
   onRename: (docId: string, newName: string) => void
   onDelete: (docId: string) => void
@@ -61,22 +61,37 @@ export const LibraryDocumentRow: React.FC<LibraryDocumentRowProps> = ({
 
   const isBusy = doc.status === "processing" || doc.status === "queued"
 
+  const handleCheckboxClick = (e: React.MouseEvent) => {
+    // When clicking checkbox directly with Shift key
+    if (e.shiftKey) {
+      e.preventDefault()
+      onToggleChecked(doc.id, true, true)
+    }
+  }
+
+  const handleRowClick = (e: React.MouseEvent) => {
+    if (doc.status !== "ready") return
+    if (e.shiftKey) {
+      onToggleChecked(doc.id, true, true)
+    } else {
+      onSelectDocument(doc.id)
+    }
+  }
+
   return (
     <div className="flex items-center gap-2 group">
-      {/* Sibling of the row button, not a child: nesting an
-          interactive control inside a button is invalid and the
-          click would be swallowed by the row. */}
       <Checkbox
         id={`select-${doc.id}`}
         checked={isChecked}
         onCheckedChange={(checked) => onToggleChecked(doc.id, checked === true)}
+        onClick={handleCheckboxClick}
         disabled={doc.status !== "ready"}
         aria-label={`Select ${doc.name} for a tool`}
       />
       <Button
         type="button"
         variant="ghost"
-        onClick={() => doc.status === "ready" && onSelectDocument(doc.id)}
+        onClick={handleRowClick}
         disabled={doc.status !== "ready"}
         className={`flex-1 min-w-0 text-left h-auto p-3.5 rounded-xl border flex items-center justify-between gap-4 transition-all whitespace-normal ${
           isSelected

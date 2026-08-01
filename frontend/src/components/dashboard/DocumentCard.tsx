@@ -1,5 +1,6 @@
 import React, { useState } from "react"
 import { Button } from "../ui/button"
+import { Checkbox } from "../ui/checkbox"
 import { Input } from "../ui/input"
 import { FileText, Pencil, Trash2 } from "lucide-react"
 import type { DocumentInfo } from "../../api"
@@ -8,6 +9,8 @@ import { documentProgressLabel } from "./documentStatus"
 type DocumentCardProps = {
   doc: DocumentInfo
   isSelected: boolean
+  isChecked?: boolean
+  onToggleChecked?: (docId: string, checked: boolean, shiftKey?: boolean) => void
   onSelectDocument: (docId: string) => void
   onOpenChange: (open: boolean) => void
   onRename: (docId: string, newName: string) => void
@@ -17,6 +20,8 @@ type DocumentCardProps = {
 export const DocumentCard: React.FC<DocumentCardProps> = ({
   doc,
   isSelected,
+  isChecked = false,
+  onToggleChecked,
   onSelectDocument,
   onOpenChange,
   onRename,
@@ -58,17 +63,22 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
 
   const isBusy = doc.status === "processing" || doc.status === "queued"
 
+  const handleCardClick = (e: React.MouseEvent) => {
+    if (doc.status !== "ready") return
+    if (e.shiftKey && onToggleChecked) {
+      onToggleChecked(doc.id, true, true)
+    } else {
+      onSelectDocument(doc.id)
+      onOpenChange(false)
+    }
+  }
+
   return (
     <div className="relative group">
       <Button
         type="button"
         variant="ghost"
-        onClick={() => {
-          if (doc.status === "ready") {
-            onSelectDocument(doc.id)
-            onOpenChange(false)
-          }
-        }}
+        onClick={handleCardClick}
         disabled={doc.status !== "ready"}
         className={`w-full text-left h-auto p-3.5 rounded-xl border flex flex-col gap-2 cursor-pointer transition-all whitespace-normal ${
           isSelected
@@ -79,6 +89,21 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
         }`}
       >
         <div className="flex items-center gap-3 min-w-0 w-full">
+          {onToggleChecked && (
+            <Checkbox
+              id={`select-card-${doc.id}`}
+              checked={isChecked}
+              onCheckedChange={(checked) => onToggleChecked(doc.id, checked === true)}
+              onClick={(e) => {
+                e.stopPropagation()
+                if (e.shiftKey) {
+                  onToggleChecked(doc.id, true, true)
+                }
+              }}
+              disabled={doc.status !== "ready"}
+              aria-label={`Select ${doc.name}`}
+            />
+          )}
           <div className={`p-2 rounded-lg shrink-0 ${isSelected ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"}`}>
             <FileText className="h-4 w-4" aria-hidden="true" />
           </div>
