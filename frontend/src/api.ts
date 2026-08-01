@@ -205,6 +205,15 @@ export const api = {
   getDocument: (id: string) => apiFetch<DocumentDetail>(`/documents/${id}`),
   dismissDocument: (id: string) => apiFetch<void>(`/documents/${id}/dismiss`, { method: "POST" }),
   
+  renameDocument: (id: string, name: string) =>
+    apiFetch<{ id: string; name: string }>(`/documents/${id}/rename`, {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+
+  deleteDocument: (id: string) =>
+    apiFetch<void>(`/documents/${id}/delete`, { method: "POST" }),
+  
   uploadDocument: async (file: File): Promise<{ document_id: string }> => {
     const formData = new FormData();
     formData.append("file", file);

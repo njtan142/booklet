@@ -150,6 +150,27 @@ export const Dashboard: React.FC = () => {
     },
   })
 
+  const renameMutation = useMutation({
+    mutationFn: ({ docId, name }: { docId: string; name: string }) => api.renameDocument(docId, name),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["documents"] })
+    },
+    onError: (err: any) => {
+      alert(`Failed to rename document: ${err.message}`)
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (docId: string) => api.deleteDocument(docId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["documents"] })
+      setSelectedDocId(null)
+    },
+    onError: (err: any) => {
+      alert(`Failed to delete document: ${err.message}`)
+    },
+  })
+
   const compileMutation = useMutation({
     mutationFn: (docId: string) =>
       api.compileBooklet(docId, {
@@ -260,6 +281,8 @@ export const Dashboard: React.FC = () => {
           onResume={(docId) => resumeMutation.mutate(docId)}
           onDismissFailure={dismissFailedUpload}
           onOpenLibraryDialog={() => setIsLibraryModalOpen(true)}
+          onRename={(docId, name) => renameMutation.mutate({ docId, name })}
+          onDelete={(docId) => deleteMutation.mutate(docId)}
         />
 
         <RecentSessionsPanel
@@ -296,6 +319,8 @@ export const Dashboard: React.FC = () => {
         failedUploads={failedUploads}
         onResume={(docId) => resumeMutation.mutate(docId)}
         onDismissFailure={dismissFailedUpload}
+        onRename={(docId, name) => renameMutation.mutate({ docId, name })}
+        onDelete={(docId) => deleteMutation.mutate(docId)}
       />
 
       <ToolActionBar selection={checkedDocuments} onClear={() => setCheckedDocIds([])} />

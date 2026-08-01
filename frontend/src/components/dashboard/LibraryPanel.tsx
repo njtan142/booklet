@@ -1,10 +1,10 @@
-import React from "react"
+import React, { useState } from "react"
 import { Button } from "../ui/button"
 import { Card } from "../ui/card"
 import { Checkbox } from "../ui/checkbox"
 import { Input } from "../ui/input"
 import { ScrollArea } from "../ui/scroll-area"
-import { FileText, Loader2, Search } from "lucide-react"
+import { FileText, Loader2, Pencil, Search, Trash2 } from "lucide-react"
 import type { DocumentInfo } from "../../api"
 import type { FailedUpload } from "./useDocumentUploads"
 import { DocumentStatusIcon, documentProgressLabel } from "./documentStatus"
@@ -76,6 +76,8 @@ type LibraryPanelProps = {
   onResume: (docId: string) => void
   onDismissFailure: (id: string) => void
   onOpenLibraryDialog: () => void
+  onRename: (docId: string, newName: string) => void
+  onDelete: (docId: string) => void
 }
 
 export const LibraryPanel: React.FC<LibraryPanelProps> = ({
@@ -92,111 +94,191 @@ export const LibraryPanel: React.FC<LibraryPanelProps> = ({
   onResume,
   onDismissFailure,
   onOpenLibraryDialog,
-}) => (
-  <div className="glass p-6 rounded-2xl border-border space-y-4">
-    <div className="flex items-center justify-between">
-      <h3 className="text-lg font-bold text-foreground m-0">Library</h3>
-      <Button
-        type="button"
-        variant="link"
-        className="p-0 h-auto text-xs text-primary hover:underline font-semibold"
-        onClick={onOpenLibraryDialog}
-      >
-        See all
-      </Button>
-    </div>
+  onRename,
+  onDelete,
+}) => {
+  const [renamingDocId, setRenamingDocId] = useState<string | null>(null)
+  const [renameInput, setRenameInput] = useState<string>("")
 
-    {loading ? (
-      <div className="flex items-center justify-center py-8">
-        <Loader2 className="h-6 w-6 animate-spin text-primary" aria-hidden="true" />
+  const startRename = (doc: DocumentInfo) => {
+    setRenamingDocId(doc.id)
+    setRenameInput(doc.name)
+  }
+
+  const commitRename = (docId: string) => {
+    const trimmed = renameInput.trim()
+    if (trimmed && trimmed !== documents.find((d) => d.id === docId)?.name) {
+      onRename(docId, trimmed)
+    }
+    setRenamingDocId(null)
+    setRenameInput("")
+  }
+
+  const handleRenameKeyDown = (docId: string, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault()
+      commitRename(docId)
+    } else if (e.key === "Escape") {
+      e.preventDefault()
+      setRenamingDocId(null)
+      setRenameInput("")
+    }
+  }
+
+  const handleDelete = (doc: DocumentInfo) => {
+    if (window.confirm(`Delete "${doc.name}"? This cannot be undone.`)) {
+      onDelete(doc.id)
+    }
+  }
+
+  return (
+    <div className="glass p-6 rounded-2xl border-border space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-bold text-foreground m-0">Library</h3>
+        <Button
+          type="button"
+          variant="link"
+          className="p-0 h-auto text-xs text-primary hover:underline font-semibold"
+          onClick={onOpenLibraryDialog}
+        >
+          See all
+        </Button>
       </div>
-    ) : documents.length === 0 ? (
-      <p className="text-muted-foreground text-xs text-center py-6">No documents uploaded yet.</p>
-    ) : (
-      <>
-        <div className="relative">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            type="text"
-            placeholder="Search documents..."
-            className="pl-8"
-            value={searchQuery}
-            onChange={(e) => onSearchQueryChange(e.target.value)}
-          />
+
+      {loading ? (
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="h-6 w-6 animate-spin text-primary" aria-hidden="true" />
         </div>
+      ) : documents.length === 0 ? (
+        <p className="text-muted-foreground text-xs text-center py-6">No documents uploaded yet.</p>
+      ) : (
+        <>
+          <div className="relative">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              type="text"
+              placeholder="Search documents..."
+              className="pl-8"
+              value={searchQuery}
+              onChange={(e) => onSearchQueryChange(e.target.value)}
+            />
+          </div>
 
-        {filteredDocuments.length === 0 ? (
-          <p className="text-muted-foreground text-xs text-center py-6">No matching documents found.</p>
-        ) : (
-          <ScrollArea className="max-h-[400px]">
-            <div className="space-y-2.5 pr-4">
-              {filteredDocuments.map((doc) => {
-                const isSelected = selectedDocId === doc.id
-                const failedUpload = failedUploads.find((item) => item.documentId === doc.id)
+          {filteredDocuments.length === 0 ? (
+            <p className="text-muted-foreground text-xs text-center py-6">No matching documents found.</p>
+          ) : (
+            <ScrollArea className="max-h-[400px]">
+              <div className="space-y-2.5 pr-4">
+                {filteredDocuments.map((doc) => {
+                  const isSelected = selectedDocId === doc.id
+                  const failedUpload = failedUploads.find((item) => item.documentId === doc.id)
 
-                if (failedUpload || doc.status === "failed") {
+                  if (failedUpload || doc.status === "failed") {
+                    return (
+                      <FailedDocumentRow
+                        key={doc.id}
+                        doc={doc}
+                        layout="row"
+                        message={`Upload failed${failedUpload ? `: ${failedUpload.message}` : "."}`}
+                        onResume={() => onResume(doc.id)}
+                        onDismiss={() => onDismissFailure(failedUpload?.id ?? `doc-${doc.id}`)}
+                      />
+                    )
+                  }
+
+                  const isBusy = doc.status === "processing" || doc.status === "queued"
+                  const isRenaming = renamingDocId === doc.id
+
                   return (
-                    <FailedDocumentRow
-                      key={doc.id}
-                      doc={doc}
-                      layout="row"
-                      message={`Upload failed${failedUpload ? `: ${failedUpload.message}` : "."}`}
-                      onResume={() => onResume(doc.id)}
-                      onDismiss={() => onDismissFailure(failedUpload?.id ?? `doc-${doc.id}`)}
-                    />
+                    <div key={doc.id} className="flex items-center gap-2 group">
+                      {/* Sibling of the row button, not a child: nesting an
+                          interactive control inside a button is invalid and the
+                          click would be swallowed by the row. */}
+                      <Checkbox
+                        id={`select-${doc.id}`}
+                        checked={checkedDocIds.includes(doc.id)}
+                        onCheckedChange={(checked) => onToggleChecked(doc.id, checked === true)}
+                        disabled={doc.status !== "ready"}
+                        aria-label={`Select ${doc.name} for a tool`}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={() => doc.status === "ready" && onSelectDocument(doc.id)}
+                        disabled={doc.status !== "ready"}
+                        className={`flex-1 min-w-0 text-left h-auto p-3.5 rounded-xl border flex items-center justify-between gap-4 transition-all whitespace-normal ${
+                          isSelected
+                            ? "bg-primary/10 border-primary/30"
+                            : isBusy
+                              ? "bg-muted/30 border-border opacity-60 cursor-not-allowed"
+                              : "bg-background/60 border-border hover:border-primary/25"
+                        }`}
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className={`p-2 rounded-lg ${isSelected ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"}`}>
+                            <FileText className="h-4 w-4" aria-hidden="true" />
+                          </div>
+                          <div className="min-w-0">
+                            {isRenaming ? (
+                              <Input
+                                type="text"
+                                className="h-5 text-xs"
+                                value={renameInput}
+                                onChange={(e) => setRenameInput(e.target.value)}
+                                onBlur={() => commitRename(doc.id)}
+                                onKeyDown={(e) => handleRenameKeyDown(doc.id, e)}
+                                autoFocus
+                              />
+                            ) : (
+                              <>
+                                <h4 className="text-xs font-bold text-foreground truncate m-0" title={doc.name}>
+                                  {doc.name}
+                                </h4>
+                                <p className="text-[10px] text-muted-foreground mt-0.5">
+                                  {documentProgressLabel(doc)}
+                                </p>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        <div>
+                          <DocumentStatusIcon status={doc.status} />
+                        </div>
+                      </Button>
+
+                      <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          onClick={() => startRename(doc)}
+                          disabled={isBusy}
+                          aria-label={`Rename ${doc.name}`}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/15"
+                          onClick={() => handleDelete(doc)}
+                          disabled={isBusy}
+                          aria-label={`Delete ${doc.name}`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </div>
                   )
-                }
-
-                const isBusy = doc.status === "processing" || doc.status === "queued"
-
-                return (
-                  <div key={doc.id} className="flex items-center gap-2">
-                    {/* Sibling of the row button, not a child: nesting an
-                        interactive control inside a button is invalid and the
-                        click would be swallowed by the row. */}
-                    <Checkbox
-                      id={`select-${doc.id}`}
-                      checked={checkedDocIds.includes(doc.id)}
-                      onCheckedChange={(checked) => onToggleChecked(doc.id, checked === true)}
-                      disabled={doc.status !== "ready"}
-                      aria-label={`Select ${doc.name} for a tool`}
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      onClick={() => doc.status === "ready" && onSelectDocument(doc.id)}
-                      disabled={doc.status !== "ready"}
-                      className={`flex-1 min-w-0 text-left h-auto p-3.5 rounded-xl border flex items-center justify-between gap-4 cursor-pointer transition-all whitespace-normal ${
-                        isSelected
-                          ? "bg-primary/10 border-primary/30"
-                          : isBusy
-                            ? "bg-muted/30 border-border opacity-60 cursor-not-allowed"
-                            : "bg-background/60 border-border hover:border-primary/25"
-                      }`}
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className={`p-2 rounded-lg ${isSelected ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"}`}>
-                          <FileText className="h-4 w-4" aria-hidden="true" />
-                        </div>
-                        <div className="min-w-0">
-                          <h4 className="text-xs font-bold text-foreground truncate m-0">{doc.name}</h4>
-                          <p className="text-[10px] text-muted-foreground mt-0.5">
-                            {documentProgressLabel(doc)}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div>
-                        <DocumentStatusIcon status={doc.status} />
-                      </div>
-                    </Button>
-                  </div>
-                )
-              })}
-            </div>
-          </ScrollArea>
-        )}
-      </>
-    )}
-  </div>
-)
+                })}
+              </div>
+            </ScrollArea>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
