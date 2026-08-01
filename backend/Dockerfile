@@ -16,8 +16,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o booklet-backend .
 # Stage 2: Final lightweight runner image
 FROM alpine:3.19
 
-# Add CA certificates for secure calls (if any)
-RUN apk --no-cache add ca-certificates
+# Add CA certificates and poppler-utils for text extraction
+RUN apk --no-cache add ca-certificates poppler-utils
 
 WORKDIR /app
 

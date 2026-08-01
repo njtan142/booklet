@@ -1,11 +1,13 @@
 package pdf
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -210,6 +212,9 @@ func SplitDocument(ctx context.Context, docID string, localPath string, onProgre
 					})
 					return
 				}
+
+				// Immediately remove single page file after processing to free disk space and OS file cache
+				_ = os.Remove(t.sf.path)
 			}
 		}()
 	}
@@ -223,6 +228,16 @@ func SplitDocument(ctx context.Context, docID string, localPath string, onProgre
 }
 
 func processSinglePage(filePath string) (text string, width float64, height float64, err error) {
+	timeout := 5 * time.Second
+	if envVal := os.Getenv("PAGE_PARSING_TIMEOUT_SECONDS"); envVal != "" {
+		if val, err := strconv.Atoi(envVal); err == nil && val > 0 {
+			timeout = time.Duration(val) * time.Second
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
 	type result struct {
 		text   string
 		width  float64
@@ -240,27 +255,20 @@ func processSinglePage(filePath string) (text string, width float64, height floa
 				}
 			}
 		}()
-		txt, w, h, e := processSinglePageInner(filePath)
+		txt, w, h, e := processSinglePageInner(ctx, filePath)
 		resChan <- result{text: txt, width: w, height: h, err: e}
 	}()
-
-	timeout := 5 * time.Second
-	if envVal := os.Getenv("PAGE_PARSING_TIMEOUT_SECONDS"); envVal != "" {
-		if val, err := strconv.Atoi(envVal); err == nil && val > 0 {
-			timeout = time.Duration(val) * time.Second
-		}
-	}
 
 	select {
 	case res := <-resChan:
 		return res.text, res.width, res.height, res.err
-	case <-time.After(timeout):
+	case <-ctx.Done():
 		log.Printf("[processSinglePage] WARNING: Timeout (%v) processing page %s. Skipping and treating as empty.", timeout, filePath)
 		return "", 595.28, 841.89, fmt.Errorf("timeout processing page %s", filePath)
 	}
 }
 
-func processSinglePageInner(filePath string) (text string, width float64, height float64, err error) {
+func processSinglePageInner(ctx context.Context, filePath string) (text string, width float64, height float64, err error) {
 	log.Printf("[processSinglePageInner] Starting processing for: %s", filePath)
 	defer func() {
 		if r := recover(); r != nil {
@@ -305,7 +313,6 @@ func processSinglePageInner(filePath string) (text string, width float64, height
 
 	contentsVal := p.V.Key("Contents")
 
-
 	// Extract page dimensions directly from page object MediaBox or CropBox in memory
 	box := p.V.Key("CropBox")
 	if box.IsNull() {
@@ -327,16 +334,18 @@ func processSinglePageInner(filePath string) (text string, width float64, height
 	}
 	log.Printf("[processSinglePage] Dimensions extracted: %.2f x %.2f for %s", width, height, filePath)
 
-	// 2. Extract plain text
+	// 2. Extract plain text using pdftotext tool
 	if !contentsVal.IsNull() {
-		var manualBuf strings.Builder
-		content := p.Content()
-		for _, txt := range content.Text {
-			manualBuf.WriteString(txt.S)
-			manualBuf.WriteString(" ")
+		cmd := exec.CommandContext(ctx, "pdftotext", filePath, "-")
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		if err := cmd.Run(); err == nil {
+			text = strings.TrimSpace(out.String())
+			log.Printf("[processSinglePage] Text extracted successfully using pdftotext, length: %d for %s", len(text), filePath)
+		} else {
+			log.Printf("[processSinglePage] Warning: pdftotext failed for %s: %v. Using empty text.", filePath, err)
+			text = ""
 		}
-		text = strings.TrimSpace(manualBuf.String())
-		log.Printf("[processSinglePage] Text extracted successfully, length: %d for %s", len(text), filePath)
 	} else {
 		log.Printf("[processSinglePage] Contents key is null, skipping text extraction for %s", filePath)
 	}

@@ -20,6 +20,8 @@ import (
 	"booklet/storage"
 	"booklet/worker"
 
+	"runtime/debug"
+
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -33,6 +35,12 @@ func main() {
 		log.Println("Starting Booklet Worker service...")
 	} else {
 		log.Println("Starting Booklet Backend service...")
+	}
+
+	// Set default Go runtime memory limit (512MB) if GOMEMLIMIT is not explicitly set in environment
+	if os.Getenv("GOMEMLIMIT") == "" {
+		debug.SetMemoryLimit(512 * 1024 * 1024)
+		log.Println("Set Go runtime memory limit (GOMEMLIMIT) to 512MB.")
 	}
 
 	// 1. Initialize DB Layer

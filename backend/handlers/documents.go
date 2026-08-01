@@ -833,14 +833,22 @@ func runBackgroundDocumentProcessing(docID uuid.UUID, localPath string, tempDir 
 		currentProcessed := atomic.AddInt32(&processedCount, 1)
 		atomic.StoreInt32(&processedPages, currentProcessed)
 
-		// Update parsed_pages and updated_at in documents table using an exact count of the processed pages to prevent race conditions
-		_, err = db.DB.Exec(`
-			UPDATE documents 
-			SET parsed_pages = (SELECT COUNT(*) FROM document_pages WHERE document_id = $1), 
-			    updated_at = CURRENT_TIMESTAMP 
-			WHERE id = $1`, docID)
-		if err != nil {
-			rl.Logf("Warning: failed to update processed pages count: %v", err)
+		// Update parsed_pages and updated_at in documents table periodically to minimize DB query overhead
+		if currentProcessed%10 == 0 || int(currentProcessed) == totalPages {
+			_, err = db.DB.Exec(`
+				UPDATE documents 
+				SET parsed_pages = $1, 
+				    updated_at = CURRENT_TIMESTAMP 
+				WHERE id = $2`, currentProcessed, docID)
+			if err != nil {
+				rl.Logf("Warning: failed to update processed pages count: %v", err)
+			}
+		}
+
+		// Periodically release memory back to the OS during large document processing
+		if currentProcessed%100 == 0 {
+			runtime.GC()
+			debug.FreeOSMemory()
 		}
 
 		return nil
