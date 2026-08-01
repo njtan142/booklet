@@ -28,6 +28,93 @@ const UPLOAD_FAILURE_TIMEOUT_MS = 60000
 // updated_at has almost certainly died with the backend.
 const QUEUE_TIMEOUT_MS = 15 * 60 * 1000
 
+type PendingEvaluationResult =
+  | { keep: true; failure?: undefined }
+  | { keep: false; failure?: FailedUpload }
+
+function evaluatePendingUpload(
+  pending: PendingUpload,
+  document: DocumentInfo | undefined,
+  now: number
+): PendingEvaluationResult {
+  if (!document) {
+    if (now - pending.startedAt > UPLOAD_FAILURE_TIMEOUT_MS) {
+      return {
+        keep: false,
+        failure: {
+          id: `timeout-${pending.documentId}`,
+          documentId: pending.documentId,
+          fileName: pending.fileName,
+          message: "Upload failed to register on the server.",
+        },
+      }
+    }
+    return { keep: true }
+  }
+
+  if (document.status === "ready") {
+    return { keep: false }
+  }
+
+  if (document.status === "failed") {
+    return {
+      keep: false,
+      failure: {
+        id: `doc-${pending.documentId}`,
+        documentId: pending.documentId,
+        fileName: pending.fileName,
+        message: "Upload failed while the backend was processing the PDF.",
+      },
+    }
+  }
+
+  const lastActive = new Date(document.updated_at || document.created_at).getTime()
+
+  if (document.status === "queued") {
+    if (now - lastActive > QUEUE_TIMEOUT_MS) {
+      return {
+        keep: false,
+        failure: {
+          id: `timeout-${pending.documentId}`,
+          documentId: pending.documentId,
+          fileName: pending.fileName,
+          message: "Upload stalled in queue. The backend may have crashed or is overloaded.",
+        },
+      }
+    }
+    return { keep: true }
+  }
+
+  if (document.status === "processing") {
+    if (now - lastActive > UPLOAD_FAILURE_TIMEOUT_MS) {
+      return {
+        keep: false,
+        failure: {
+          id: `timeout-${pending.documentId}`,
+          documentId: pending.documentId,
+          fileName: pending.fileName,
+          message: "Upload stalled while processing. The backend may have crashed.",
+        },
+      }
+    }
+    return { keep: true }
+  }
+
+  if (now - pending.startedAt > UPLOAD_FAILURE_TIMEOUT_MS) {
+    return {
+      keep: false,
+      failure: {
+        id: `timeout-${pending.documentId}`,
+        documentId: pending.documentId,
+        fileName: pending.fileName,
+        message: "Upload stalled while processing. The backend may have crashed.",
+      },
+    }
+  }
+
+  return { keep: true }
+}
+
 // useDocumentUploads owns everything about an upload between "the user picked a
 // file" and "the document is ready or has visibly failed".
 //
@@ -90,90 +177,25 @@ export function useDocumentUploads(documents: DocumentInfo[]) {
 
     const now = Date.now()
     const resolvedFailures: FailedUpload[] = []
+    const nextPendingUploads: PendingUpload[] = []
+    const docMap = new Map(documents.map((doc) => [doc.id, doc]))
 
-    const nextPendingUploads = pendingUploads.filter((pending) => {
-      const document = documents.find((item) => item.id === pending.documentId)
+    for (const pending of pendingUploads) {
+      const document = docMap.get(pending.documentId)
+      const result = evaluatePendingUpload(pending, document, now)
 
-      if (!document) {
-        // The upload returned an id but the row never appeared in the listing.
-        if (now - pending.startedAt > UPLOAD_FAILURE_TIMEOUT_MS) {
-          resolvedFailures.push({
-            id: `timeout-${pending.documentId}`,
-            documentId: pending.documentId,
-            fileName: pending.fileName,
-            message: "Upload failed to register on the server.",
-          })
-          return false
-        }
-        return true
+      if (result.keep) {
+        nextPendingUploads.push(pending)
+      } else if (result.failure) {
+        resolvedFailures.push(result.failure)
       }
-
-      if (document.status === "ready") {
-        return false
-      }
-
-      if (document.status === "failed") {
-        resolvedFailures.push({
-          id: `doc-${pending.documentId}`,
-          documentId: pending.documentId,
-          fileName: pending.fileName,
-          message: "Upload failed while the backend was processing the PDF.",
-        })
-        return false
-      }
-
-      if (document.status === "queued") {
-        const start = new Date(document.updated_at || document.created_at).getTime()
-        if (now - start > QUEUE_TIMEOUT_MS) {
-          resolvedFailures.push({
-            id: `timeout-${pending.documentId}`,
-            documentId: pending.documentId,
-            fileName: pending.fileName,
-            message: "Upload stalled in queue. The backend may have crashed or is overloaded.",
-          })
-          return false
-        }
-        return true
-      }
-
-      if (document.status === "processing") {
-        // Measured from the last activity, not from the upload: a large
-        // document legitimately processes for far longer than the timeout.
-        const lastActive = new Date(document.updated_at || document.created_at).getTime()
-        if (now - lastActive > UPLOAD_FAILURE_TIMEOUT_MS) {
-          resolvedFailures.push({
-            id: `timeout-${pending.documentId}`,
-            documentId: pending.documentId,
-            fileName: pending.fileName,
-            message: "Upload stalled while processing. The backend may have crashed.",
-          })
-          return false
-        }
-        return true
-      }
-
-      if (now - pending.startedAt > UPLOAD_FAILURE_TIMEOUT_MS) {
-        resolvedFailures.push({
-          id: `timeout-${pending.documentId}`,
-          documentId: pending.documentId,
-          fileName: pending.fileName,
-          message: "Upload stalled while processing. The backend may have crashed.",
-        })
-        return false
-      }
-
-      return true
-    })
+    }
 
     if (resolvedFailures.length > 0) {
       setFailedUploads((current) => {
-        const next = [...current]
-        for (const failure of resolvedFailures) {
-          if (!next.some((item) => item.id === failure.id)) {
-            next.push(failure)
-          }
-        }
-        return next
+        const existingIds = new Set(current.map((item) => item.id))
+        const newFailures = resolvedFailures.filter((item) => !existingIds.has(item.id))
+        return newFailures.length > 0 ? [...current, ...newFailures] : current
       })
     }
 
