@@ -125,10 +125,32 @@ func main() {
 	mux.Handle("/api/search", auth.RequireAuth(handlers.InstrumentHandler("/api/search", handlers.HandleSemanticSearch)))
 	mux.Handle("/api/documents/{id}/search-preview", auth.RequireAuth(handlers.InstrumentHandler("/api/documents/{id}/search-preview", handlers.HandleDocumentSearchPreviewPDF)))
 
+	// Tool catalog and job queue routes (require authentication middleware).
+	// A job row references users(id), so these need a real session; the admin key
+	// only bypasses the per-document permission checks inside the handlers.
+	mux.Handle("/api/tools", auth.RequireAuth(handlers.InstrumentHandler("/api/tools", handlers.HandleListTools)))
+	mux.Handle("/api/tools/jobs", auth.RequireAuth(handlers.InstrumentHandler("/api/tools/jobs", handlers.HandleToolJobs)))
+	mux.Handle("/api/tools/jobs/{id}", auth.RequireAuth(handlers.InstrumentHandler("/api/tools/jobs/{id}", handlers.HandleGetToolJob)))
+
+	// Sharing routes. The permissions route accepts *either* auth model, so it
+	// uses OptionalAuth rather than RequireAuth: an admin holding only
+	// ADMIN_API_KEY has no session cookie, and RequireAuth would reject the
+	// chown with 401 before the handler's IsAdmin bypass could run. The handler
+	// itself rejects callers that present neither a session nor the key.
+	mux.Handle("/api/documents/{id}/permissions", auth.OptionalAuth(handlers.InstrumentHandler("/api/documents/{id}/permissions", handlers.HandleDocumentPermissions)))
+	mux.Handle("/api/groups", auth.RequireAuth(handlers.InstrumentHandler("/api/groups", handlers.HandleListGroups)))
+
 	// Administrative routes (requires API key authentication, OIDC not required)
 	mux.Handle("/api/admin/clean-stale-processes", handlers.InstrumentHandler("/api/admin/clean-stale-processes", handlers.HandleCleanStaleProcesses))
 	mux.Handle("/api/admin/settings/smtp", handlers.InstrumentHandler("/api/admin/settings/smtp", handlers.HandleSMTPConfig))
 	mux.Handle("/api/admin/settings/smtp/test", handlers.InstrumentHandler("/api/admin/settings/smtp/test", handlers.HandleTestSMTP))
+
+	// Admin group management. Deliberately NOT wrapped in auth.RequireAuth: an
+	// operator holding only ADMIN_API_KEY has no session cookie and would be
+	// rejected with 401 before the handler's key check could run.
+	mux.Handle("/api/admin/groups", handlers.InstrumentHandler("/api/admin/groups", handlers.HandleAdminGroups))
+	mux.Handle("/api/admin/groups/{id}/members", handlers.InstrumentHandler("/api/admin/groups/{id}/members", handlers.HandleAdminGroupMembers))
+	mux.Handle("/api/admin/groups/{id}/members/{user_id}", handlers.InstrumentHandler("/api/admin/groups/{id}/members/{user_id}", handlers.HandleAdminGroupMember))
 
 	// Booklet Email route (requires user authentication)
 	mux.Handle("/api/booklets/{id}/email", auth.RequireAuth(handlers.InstrumentHandler("/api/booklets/{id}/email", handlers.HandleEmailBooklet)))
