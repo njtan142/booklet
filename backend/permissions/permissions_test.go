@@ -40,7 +40,10 @@ var readMatrix = []modeCase{
 	{"0o600 stranger denied", 0o600, false, false, PermRead, false},
 }
 
-// Write and execute triples must be masked the same way as read.
+// Write and execute triples must be masked the same way as read. These rows
+// exercise Decide's bit math on arbitrary modes; they are not statements about
+// what the defaults are. 0o644 denying the owner execute is precisely why
+// db.ModeDefault is 0o744 — see TestDefaultModesGrantToolExecution.
 var writeExecMatrix = []modeCase{
 	{"0o644 owner writes", 0o644, true, true, PermWrite, true},
 	{"0o444 owner cannot write", 0o444, true, true, PermWrite, false},
@@ -56,6 +59,52 @@ var writeExecMatrix = []modeCase{
 
 func allCases() []modeCase {
 	return append(append([]modeCase{}, readMatrix...), writeExecMatrix...)
+}
+
+// The default modes must satisfy the exact composite permission that
+// POST /api/tools/jobs demands of every input. Regression test for the case
+// where ModeDefault was 0o644: the owner of a freshly uploaded document held
+// rw- but no x, so the handler denied them and no tool job could ever be
+// created by a non-admin. The bit math was right; the default was not.
+func TestDefaultModesGrantToolExecution(t *testing.T) {
+	const toolInputPerm = PermRead | PermExecute
+
+	cases := []struct {
+		name    string
+		mode    int16
+		isOwner bool
+		inGroup bool
+	}{
+		{"owner of an uploaded document", db.ModeDefault, true, true},
+		{"owner of a derived document", db.ModeDefault, true, true},
+		{"legacy group member", db.ModeLegacy, false, true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if !Decide(tc.isOwner, tc.inGroup, tc.mode, toolInputPerm) {
+				t.Errorf("mode 0o%o denies PermRead|PermExecute (isOwner=%t, inGroup=%t); "+
+					"tool jobs would 404 for this caller", tc.mode, tc.isOwner, tc.inGroup)
+			}
+		})
+	}
+}
+
+// Widening the defaults must not have widened them past the owner: group and
+// other still get r-- under ModeDefault, so an upload stays private.
+func TestDefaultModeDoesNotLeakBeyondOwner(t *testing.T) {
+	if Decide(false, true, db.ModeDefault, PermWrite) {
+		t.Error("ModeDefault must not grant write to the group")
+	}
+	if Decide(false, false, db.ModeDefault, PermWrite) {
+		t.Error("ModeDefault must not grant write to other")
+	}
+	if Decide(false, true, db.ModeDefault, PermExecute) {
+		t.Error("ModeDefault must not grant execute to the group")
+	}
+	if Decide(false, false, db.ModeDefault, PermExecute) {
+		t.Error("ModeDefault must not grant execute to other")
+	}
 }
 
 func TestDecideMatrix(t *testing.T) {
