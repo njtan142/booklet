@@ -363,7 +363,8 @@ func HandleListBooklets(w http.ResponseWriter, r *http.Request) {
 			cb.config_guides, 
 			cb.created_at
 		FROM compiled_booklets cb
-		JOIN documents d ON cb.document_id = d.id`
+		JOIN documents d ON cb.document_id = d.id
+		WHERE d.is_dismissed = FALSE`
 	var bookletArgs []any
 	if !permissions.IsAdmin(r) {
 		userID := permissions.CurrentUserID(r)
@@ -373,7 +374,7 @@ func HandleListBooklets(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		clause, clauseArgs := permissions.VisibilityClause(userID, len(bookletArgs)+1, "d.")
-		bookletQuery += " WHERE " + clause
+		bookletQuery += " AND " + clause
 		bookletArgs = append(bookletArgs, clauseArgs...)
 	}
 	bookletQuery += " ORDER BY cb.created_at DESC"

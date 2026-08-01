@@ -289,6 +289,11 @@ func HandleDismissDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	_, err = db.DB.Exec(`DELETE FROM compiled_booklets WHERE document_id = $1`, docID)
+	if err != nil {
+		logger.Logf(r.Context(), "Warning: failed to delete booklets for dismissed document %s: %v", docID, err)
+	}
+
 	logger.Logf(r.Context(), "Document %s dismissed successfully", docID)
 	w.WriteHeader(http.StatusNoContent)
 }

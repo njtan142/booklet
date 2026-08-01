@@ -164,7 +164,9 @@ export const Dashboard: React.FC = () => {
     mutationFn: (docId: string) => api.deleteDocument(docId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["documents"] })
+      queryClient.invalidateQueries({ queryKey: ["booklets"] })
       setSelectedDocId(null)
+      setActiveBookletId(null)
     },
     onError: (err: any) => {
       alert(`Failed to delete document: ${err.message}`)
