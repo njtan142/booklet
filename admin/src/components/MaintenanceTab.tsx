@@ -21,20 +21,30 @@ export function MaintenanceTab({ apiKey }: MaintenanceTabProps) {
   const [resumingId, setResumingId] = useState<string | null>(null)
   const [resumeMsg, setResumeMsg] = useState<Feedback>(null)
 
-  const loadDocs = useCallback(async () => {
-    setLoadingDocs(true)
+  const fetchDocs = useCallback(async () => {
     try {
       setDocs(await adminApi.listDocuments())
     } catch {
       setDocs([])
-    } finally {
-      setLoadingDocs(false)
     }
   }, [])
+
+  const loadDocs = useCallback(async () => {
+    setLoadingDocs(true)
+    await fetchDocs()
+    setLoadingDocs(false)
+  }, [fetchDocs])
 
   useEffect(() => {
     loadDocs()
   }, [loadDocs])
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      fetchDocs()
+    }, 500)
+    return () => clearInterval(timer)
+  }, [fetchDocs])
 
   const counts = {
     queued: docs.filter(d => d.status === "queued").length,
