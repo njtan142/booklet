@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -32,12 +33,12 @@ import (
 // 1. Document Handlers
 
 type DocumentResponse struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	TotalPages  int       `json:"total_pages"`
-	SplitPages  int       `json:"split_pages"`
-	ParsedPages int       `json:"parsed_pages"`
-	Status      string    `json:"status"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	TotalPages  int    `json:"total_pages"`
+	SplitPages  int    `json:"split_pages"`
+	ParsedPages int    `json:"parsed_pages"`
+	Status      string `json:"status"`
 	// Kind and MimeType drive the frontend tool menu: a tool declares the kinds
 	// it accepts, so the client cannot offer Rotate on a DOCX source without
 	// them. The API enforces the same rule, this only avoids offering the tool.
@@ -126,6 +127,142 @@ type DocumentDetailResponse struct {
 	Pages []DocumentPageDetail `json:"pages"`
 }
 
+func HandleRenameDocument(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch && r.Method != http.MethodPost {
+		logger.Logf(r.Context(), "HandleRenameDocument: method %s not allowed", r.Method)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	docID := r.PathValue("id")
+	logger.Logf(r.Context(), "HandleRenameDocument: request to rename docID=%s", docID)
+	if _, err := uuid.Parse(docID); err != nil {
+		logger.Logf(r.Context(), "HandleRenameDocument: invalid UUID format: %s", docID)
+		http.Error(w, "invalid UUID format", http.StatusBadRequest)
+		return
+	}
+
+	if !permissions.EnforceDocument(w, r, docID, permissions.PermWrite) {
+		return
+	}
+
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		logger.Logf(r.Context(), "HandleRenameDocument: invalid JSON: %v", err)
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		logger.Logf(r.Context(), "HandleRenameDocument: empty name rejected")
+		http.Error(w, "name must not be empty", http.StatusBadRequest)
+		return
+	}
+
+	_, err := db.DB.Exec(`UPDATE documents SET name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, req.Name, docID)
+	if err != nil {
+		logger.Logf(r.Context(), "Error: failed to rename document %s: %v", docID, err)
+		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	logger.Logf(r.Context(), "Document %s renamed to %q", docID, req.Name)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"id": docID, "name": req.Name})
+}
+
+func HandleDeleteDocument(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete && r.Method != http.MethodPost {
+		logger.Logf(r.Context(), "HandleDeleteDocument: method %s not allowed", r.Method)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	docID := r.PathValue("id")
+	logger.Logf(r.Context(), "HandleDeleteDocument: request to delete docID=%s", docID)
+	if _, err := uuid.Parse(docID); err != nil {
+		logger.Logf(r.Context(), "HandleDeleteDocument: invalid UUID format: %s", docID)
+		http.Error(w, "invalid UUID format", http.StatusBadRequest)
+		return
+	}
+
+	if !permissions.EnforceDocument(w, r, docID, permissions.PermWrite) {
+		return
+	}
+
+	ctx := r.Context()
+
+	var originalStoragePath string
+	err := db.DB.QueryRow(`SELECT original_storage_path FROM documents WHERE id = $1`, docID).Scan(&originalStoragePath)
+	if err == sql.ErrNoRows {
+		logger.Logf(r.Context(), "HandleDeleteDocument: document %s not found", docID)
+		http.Error(w, "document not found", http.StatusNotFound)
+		return
+	} else if err != nil {
+		logger.Logf(r.Context(), "Error: failed to query document %s for deletion: %v", docID, err)
+		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	pageRows, err := db.DB.Query(`SELECT storage_path FROM document_pages WHERE document_id = $1`, docID)
+	if err != nil {
+		logger.Logf(r.Context(), "Error: failed to query pages for document %s deletion: %v", docID, err)
+		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer pageRows.Close()
+
+	var pagePaths []string
+	for pageRows.Next() {
+		var p string
+		if err := pageRows.Scan(&p); err != nil {
+			logger.Logf(r.Context(), "Error: failed to scan page path for document %s deletion: %v", docID, err)
+			http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		pagePaths = append(pagePaths, p)
+	}
+
+	_, err = db.DB.Exec(`DELETE FROM document_pages WHERE document_id = $1`, docID)
+	if err != nil {
+		logger.Logf(r.Context(), "Error: failed to delete pages for document %s: %v", docID, err)
+		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	_, err = db.DB.Exec(`DELETE FROM compiled_booklets WHERE document_id = $1`, docID)
+	if err != nil {
+		logger.Logf(r.Context(), "Error: failed to delete booklets for document %s: %v", docID, err)
+		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	_, err = db.DB.Exec(`DELETE FROM documents WHERE id = $1`, docID)
+	if err != nil {
+		logger.Logf(r.Context(), "Error: failed to delete document %s: %v", docID, err)
+		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if originalStoragePath != "" {
+		if err := storage.DeleteFile(ctx, originalStoragePath); err != nil {
+			logger.Logf(r.Context(), "Warning: failed to delete original file %s for document %s: %v", originalStoragePath, docID, err)
+		}
+	}
+	for _, p := range pagePaths {
+		if p != "" {
+			if err := storage.DeleteFile(ctx, p); err != nil {
+				logger.Logf(r.Context(), "Warning: failed to delete page file %s for document %s: %v", p, docID, err)
+			}
+		}
+	}
+
+	logger.Logf(r.Context(), "Document %s deleted successfully", docID)
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func HandleDismissDocument(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		logger.Logf(r.Context(), "HandleDismissDocument: method %s not allowed", r.Method)
@@ -180,7 +317,7 @@ func HandleGetDocument(w http.ResponseWriter, r *http.Request) {
 	err := db.DB.QueryRow(`
 		SELECT id, name, COALESCE(total_pages, 0), split_pages, parsed_pages, status, kind, mime_type, created_at, updated_at 
 		FROM documents WHERE id = $1`, docID).Scan(&id, &d.Name, &d.TotalPages, &d.SplitPages, &d.ParsedPages, &d.Status, &d.Kind, &d.MimeType, &d.CreatedAt, &d.UpdatedAt)
-	
+
 	if err == sql.ErrNoRows {
 		logger.Logf(r.Context(), "GetDocument: document %s not found", docID)
 		http.Error(w, "document not found", http.StatusNotFound)
@@ -199,7 +336,7 @@ func HandleGetDocument(w http.ResponseWriter, r *http.Request) {
 		FROM document_pages 
 		WHERE document_id = $1 
 		ORDER BY page_number ASC`, docID)
-	
+
 	if err != nil {
 		logger.Logf(r.Context(), "Error: failed to query pages for document %s: %v", docID, err)
 		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
@@ -262,7 +399,7 @@ func HandleGetPagePDF(w http.ResponseWriter, r *http.Request) {
 		SELECT storage_path 
 		FROM document_pages 
 		WHERE document_id = $1 AND page_number = $2`, docID, pageNum).Scan(&storagePath)
-	
+
 	if err == sql.ErrNoRows {
 		logger.Logf(r.Context(), "HandleGetPagePDF: page %d of document %s not found in DB", pageNum, docID)
 		http.Error(w, "page not found", http.StatusNotFound)
@@ -345,7 +482,7 @@ func HandleUploadDocument(w http.ResponseWriter, r *http.Request) {
 
 	docID := uuid.New()
 	logger.Logf(r.Context(), "HandleUploadDocument: starting upload for file=%s (docID=%s owner=%s)", header.Filename, docID, ownerID)
-	
+
 	// Create local temp file to inspect PDF page count and perform split
 	tempDir, err := os.MkdirTemp("", "booklet-upload-*")
 	if err != nil {
@@ -363,7 +500,7 @@ func HandleUploadDocument(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to create temp file", http.StatusInternalServerError)
 		return
 	}
-	
+
 	if _, err := io.Copy(outField, file); err != nil {
 		outField.Close()
 		os.RemoveAll(tempDir)
@@ -387,9 +524,9 @@ func HandleUploadDocument(w http.ResponseWriter, r *http.Request) {
 	_, err = db.DB.Exec(`
 		INSERT INTO documents (id, name, total_pages, split_pages, parsed_pages, status, original_storage_path,
 		                       owner_id, group_id, mode, kind, mime_type, original_filename, created_at, updated_at) 
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pdf', 'application/pdf', $11, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`, 
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pdf', 'application/pdf', $11, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
 		docID, header.Filename, 0, 0, 0, "queued", originalKey, ownerID, groupID, db.ModeDefault, header.Filename)
-	
+
 	if err != nil {
 		os.RemoveAll(tempDir)
 		logger.Logf(r.Context(), "Error: failed to insert document %s metadata into database: %v", docID, err)
@@ -621,7 +758,7 @@ func HandleResumeDocument(w http.ResponseWriter, r *http.Request) {
 	err = db.DB.QueryRow(`
 		SELECT status, original_storage_path, name 
 		FROM documents WHERE id = $1`, docID).Scan(&status, &originalStoragePath, &name)
-	
+
 	if err == sql.ErrNoRows {
 		logger.Logf(r.Context(), "HandleResumeDocument: document %s not found", docID)
 		http.Error(w, "document not found", http.StatusNotFound)

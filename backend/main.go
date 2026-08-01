@@ -109,6 +109,9 @@ func main() {
 	mux.Handle("/api/documents/upload", auth.RequireAuth(handlers.InstrumentHandler("/api/documents/upload", handlers.HandleUploadDocument)))
 	mux.Handle("/api/documents/{id}/pages/{page_number}/pdf", auth.RequireAuth(handlers.InstrumentHandler("/api/documents/{id}/pages/{page_number}/pdf", handlers.HandleGetPagePDF)))
 
+	mux.Handle("/api/documents/{id}/rename", auth.RequireAuth(handlers.InstrumentHandler("/api/documents/{id}/rename", handlers.HandleRenameDocument)))
+	mux.Handle("/api/documents/{id}/delete", auth.RequireAuth(handlers.InstrumentHandler("/api/documents/{id}/delete", handlers.HandleDeleteDocument)))
+
 	// New resume route (requires authentication middleware)
 	mux.Handle("/api/documents/{id}/resume", auth.RequireAuth(handlers.InstrumentHandler("/api/documents/{id}/resume", handlers.HandleResumeDocument)))
 
@@ -174,7 +177,7 @@ func main() {
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		
+
 		allowedOriginsStr := os.Getenv("ALLOWED_ORIGINS")
 		if allowedOriginsStr == "" {
 			// Fallback to FRONTEND_URL if ALLOWED_ORIGINS is not set
@@ -274,4 +277,3 @@ func loggingMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(rw, r)
 	})
 }
-
