@@ -208,3 +208,83 @@ func UserExists(userID string) (bool, error) {
 	err := DB.QueryRow(`SELECT EXISTS (SELECT 1 FROM users WHERE id = $1)`, userID).Scan(&exists)
 	return exists, err
 }
+
+// EnsureGroup returns the id of the named group, creating it when absent.
+func EnsureGroup(name string, isPersonal bool) (string, error) {
+	var id string
+	err := DB.QueryRow(`SELECT id FROM groups WHERE name = $1`, name).Scan(&id)
+	if err == nil {
+		return id, nil
+	}
+	if err != sql.ErrNoRows {
+		return "", err
+	}
+
+	newID := uuid.New().String()
+	// ON CONFLICT covers a concurrent creator racing us between the SELECT and
+	// the INSERT; the RETURNING clause then yields nothing, so re-read.
+	err = DB.QueryRow(`
+		INSERT INTO groups (id, name, is_personal)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (name) DO NOTHING
+		RETURNING id;
+	`, newID, name, isPersonal).Scan(&id)
+	if err == sql.ErrNoRows {
+		if err := DB.QueryRow(`SELECT id FROM groups WHERE name = $1`, name).Scan(&id); err != nil {
+			return "", err
+		}
+		return id, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+// EnsurePersonalGroup creates the caller's personal group, adds them to it and
+// sets users.primary_group_id when it is not already set. Called on every login
+// so that pre-existing users are migrated lazily.
+func EnsurePersonalGroup(userID string) (string, error) {
+	var existing sql.NullString
+	if err := DB.QueryRow(`SELECT primary_group_id FROM users WHERE id = $1`, userID).Scan(&existing); err != nil {
+		return "", fmt.Errorf("failed to read primary group for %s: %w", userID, err)
+	}
+	if existing.Valid && existing.String != "" {
+		// Membership may still be missing if a previous run failed midway.
+		if _, err := DB.Exec(`
+			INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)
+			ON CONFLICT DO NOTHING;
+		`, existing.String, userID); err != nil {
+			return "", fmt.Errorf("failed to ensure group membership for %s: %w", userID, err)
+		}
+		return existing.String, nil
+	}
+
+	// Namespaced by user id so the unique group name can never collide with an
+	// admin-created group.
+	groupID, err := EnsureGroup("user:"+userID, true)
+	if err != nil {
+		return "", fmt.Errorf("failed to create personal group for %s: %w", userID, err)
+	}
+
+	if _, err := DB.Exec(`
+		INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)
+		ON CONFLICT DO NOTHING;
+	`, groupID, userID); err != nil {
+		return "", fmt.Errorf("failed to add %s to personal group: %w", userID, err)
+	}
+
+	if _, err := DB.Exec(`
+		UPDATE users SET primary_group_id = $1 WHERE id = $2 AND primary_group_id IS NULL;
+	`, groupID, userID); err != nil {
+		return "", fmt.Errorf("failed to set primary group for %s: %w", userID, err)
+	}
+
+	return groupID, nil
+}
+
+// PrimaryGroupID returns the caller's primary group, creating it if needed.
+func PrimaryGroupID(userID string) (string, error) {
+	return EnsurePersonalGroup(userID)
+}
+
