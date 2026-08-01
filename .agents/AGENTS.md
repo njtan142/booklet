@@ -12,3 +12,9 @@
 2. **Modular Booklet Flows**:
    - Booklet compilation and manual duplex print layout must be separate API actions from document uploading.
    - Do not generate booklet pages during the initial document upload phase; only split the document into single-page PDFs, extract text, and index embeddings. Booklet rendering is done on-demand using page-selection layout coordinates.
+
+
+## Doing too much
+1. Stop oververifying things 
+2. You're on windows so stop using linux commands
+3. dont run docker commands unless i say so
