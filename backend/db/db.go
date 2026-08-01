@@ -220,21 +220,88 @@ func runMigrations() error {
 		return err
 	}
 
+	// 9. Ledger for one-shot data migrations
+	if err := ensureSchemaMigrations(); err != nil {
+		return err
+	}
+
+	// 10. One-shot grant of the execute bit to pre-execute default modes
+	if err := migrateExecuteBit(); err != nil {
+		return err
+	}
+
 	log.Println("Database migrations applied successfully.")
 	return nil
 }
 
 // Mode bit constants mirroring Unix rwx triples.
+//
+// The execute bit is what permits deriving a new document from an existing one
+// (POST /api/tools/jobs checks PermRead|PermExecute on every input), so an
+// owner without it cannot run a single tool on their own upload. Both defaults
+// therefore set x wherever they already set r+w.
 const (
-	// ModeDefault is 0o644: owner rw-, group r--, other r--.
-	ModeDefault = 420
-	// ModeLegacy is 0o664: owner rw-, group rw-, other r--.
-	// Used for the backfill so existing shared documents stay writable.
-	ModeLegacy = 436
+	// ModeDefault is 0o744: owner rwx, group r--, other r--.
+	ModeDefault = 484
+	// ModeLegacy is 0o774: owner rwx, group rwx, other r--.
+	// Used for the backfill so existing shared documents stay writable and
+	// runnable by the legacy group, which is how pre-permission users reach
+	// documents owned by the system user.
+	ModeLegacy = 508
+)
+
+// modeDefaultPre is the pre-execute-bit value of ModeDefault (0o644) and
+// modeLegacyPre that of ModeLegacy (0o664). migrateExecuteBit rewrites rows
+// still carrying them; nothing else should reference these.
+const (
+	modeDefaultPre = 420
+	modeLegacyPre  = 436
 )
 
 // SystemUserID owns every document created before the permission model existed.
 const SystemUserID = "system"
+
+// migrationExecuteBit names the one-shot data migration in migrateExecuteBit.
+const migrationExecuteBit = "documents_execute_bit_2026_08"
+
+// ensureSchemaMigrations creates the ledger for migrations that must run once
+// rather than on every boot. Everything else in this file is idempotent by
+// construction (IF NOT EXISTS, or a WHERE that self-limits), so this table
+// exists only for data migrations that cannot tell "never applied" from "applied
+// and then deliberately undone by a user".
+func ensureSchemaMigrations() error {
+	if _, err := DB.Exec(`
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			name TEXT PRIMARY KEY,
+			applied_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+	`); err != nil {
+		return fmt.Errorf("failed to create schema_migrations table: %w", err)
+	}
+	return nil
+}
+
+// migrationApplied reports whether the named one-shot migration already ran.
+func migrationApplied(name string) (bool, error) {
+	var exists bool
+	if err := DB.QueryRow(
+		`SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE name = $1)`, name).Scan(&exists); err != nil {
+		return false, fmt.Errorf("failed to read schema_migrations for %s: %w", name, err)
+	}
+	return exists, nil
+}
+
+// markMigrationApplied records a one-shot migration as done. ON CONFLICT keeps
+// a concurrent second instance from failing on the primary key.
+func markMigrationApplied(name string) error {
+	if _, err := DB.Exec(`
+		INSERT INTO schema_migrations (name) VALUES ($1)
+		ON CONFLICT (name) DO NOTHING;
+	`, name); err != nil {
+		return fmt.Errorf("failed to record migration %s: %w", name, err)
+	}
+	return nil
+}
 
 // LegacyGroupName is the group that all pre-permission documents belong to.
 const LegacyGroupName = "legacy"
@@ -365,8 +432,8 @@ func migrateJobQueue() error {
 }
 
 // backfillOwnership assigns every ownerless document to the system user and the
-// legacy group with mode 0o664, so existing users keep read and write access.
-// Safe to run on every boot.
+// legacy group with ModeLegacy (0o774), so existing users keep read, write and
+// execute access. Safe to run on every boot.
 func backfillOwnership() error {
 	if _, err := DB.Exec(`
 		INSERT INTO users (id, email, name, updated_at)
@@ -394,6 +461,57 @@ func backfillOwnership() error {
 	}
 
 	return nil
+}
+
+// migrateExecuteBit grants the execute bit to documents created before it was
+// needed to run a tool.
+//
+// POST /api/tools/jobs has always required PermRead|PermExecute on every input,
+// but ModeDefault was 0o644 and ModeLegacy 0o664 — neither sets x in any triple
+// — so the endpoint denied every non-admin caller on every document, including
+// the owner of a file they had just uploaded. Admins only escaped it because
+// IsAdmin short-circuits the check.
+//
+// This one runs exactly once, unlike the other migrations here. It cannot be
+// idempotent-per-boot: 0o644 is both the old default and a mode a user may
+// deliberately choose in the share dialog, and those two are indistinguishable
+// in the row. Re-running on every boot would keep re-granting execute on a
+// document whose owner had just revoked it. The marker in schema_migrations is
+// what makes "existing rows" mean the ones that existed at upgrade time.
+//
+// updated_at is deliberately not touched, so this does not reshuffle library
+// listings that sort by it.
+func migrateExecuteBit() error {
+	// ADD COLUMN IF NOT EXISTS cannot restate the default of a column that
+	// already exists, so the value in migratePermissions only applies to a fresh
+	// install. Databases migrated by an earlier build need this explicitly, and
+	// it is safe to reassert on every boot.
+	if _, err := DB.Exec(fmt.Sprintf(
+		`ALTER TABLE documents ALTER COLUMN mode SET DEFAULT %d;`, ModeDefault)); err != nil {
+		return fmt.Errorf("failed to update documents.mode default: %w", err)
+	}
+
+	applied, err := migrationApplied(migrationExecuteBit)
+	if err != nil {
+		return err
+	}
+	if applied {
+		return nil
+	}
+
+	res, err := DB.Exec(`
+		UPDATE documents
+		SET mode = CASE mode WHEN $1 THEN $2 WHEN $3 THEN $4 ELSE mode END
+		WHERE mode IN ($1, $3);
+	`, modeDefaultPre, ModeDefault, modeLegacyPre, ModeLegacy)
+	if err != nil {
+		return fmt.Errorf("failed to add execute bit to legacy document modes: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		log.Printf("Granted the execute bit to %d document(s) at a pre-execute default mode.", n)
+	}
+
+	return markMigrationApplied(migrationExecuteBit)
 }
 
 // EnsureGroup returns the id of the named group, creating it when absent.
