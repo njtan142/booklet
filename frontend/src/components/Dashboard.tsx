@@ -152,8 +152,10 @@ export const Dashboard: React.FC = () => {
 
   const renameMutation = useMutation({
     mutationFn: ({ docId, name }: { docId: string; name: string }) => api.renameDocument(docId, name),
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["documents"] })
+      queryClient.invalidateQueries({ queryKey: ["document", variables.docId] })
+      queryClient.invalidateQueries({ queryKey: ["booklets"] })
     },
     onError: (err: any) => {
       alert(`Failed to rename document: ${err.message}`)
