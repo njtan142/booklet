@@ -12,6 +12,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu"
+import { ToolDialog } from "./ToolDialog"
 import { AlertCircle, Loader2, Wrench, X } from "lucide-react"
 
 type ToolActionBarProps = {
@@ -26,19 +27,12 @@ type FinishedJob = {
   error?: string
 }
 
-// requiresConfiguration reports whether a tool needs parameters the action bar
-// cannot supply. Stage 1.7 only enqueues zero-config tools; the per-schema
-// ToolDialog that collects rotate angles, page ranges and passwords arrives
-// with the Stage 2 tools that actually need them.
-function requiresConfiguration(tool: Tool): boolean {
-  return tool.params.some((p) => p.required)
-}
-
 export const ToolActionBar: React.FC<ToolActionBarProps> = ({ selection, onClear }) => {
   const queryClient = useQueryClient()
   const [activeJobIds, setActiveJobIds] = useState<string[]>([])
   const [finishedJobs, setFinishedJobs] = useState<FinishedJob[]>([])
   const [submitError, setSubmitError] = useState<string>("")
+  const [configuringTool, setConfiguringTool] = useState<Tool | null>(null)
 
   // The catalog only lists tools that are implemented and whose engine is
   // reachable, so it is safe to offer everything it returns.
@@ -83,12 +77,13 @@ export const ToolActionBar: React.FC<ToolActionBarProps> = ({ selection, onClear
     }
   }, [activeJobs, queryClient])
 
-  const runTool = async (tool: Tool) => {
+  const runTool = async (tool: Tool, params: Record<string, unknown> = {}) => {
     setSubmitError("")
     try {
       const { job_id } = await api.createToolJob(
         tool.slug,
-        selection.map((doc) => doc.id)
+        selection.map((doc) => doc.id),
+        params
       )
       setActiveJobIds((current) => [...current, job_id])
       onClear()
@@ -97,9 +92,21 @@ export const ToolActionBar: React.FC<ToolActionBarProps> = ({ selection, onClear
     }
   }
 
+  const handleToolSelect = (tool: Tool) => {
+    if (tool.params.length > 0) {
+      setConfiguringTool(tool)
+    } else {
+      runTool(tool)
+    }
+  }
+
   const runningCount = activeJobIds.length
   const hasNothingToShow =
-    selection.length === 0 && runningCount === 0 && finishedJobs.length === 0 && !submitError
+    selection.length === 0 &&
+    runningCount === 0 &&
+    finishedJobs.length === 0 &&
+    !submitError &&
+    !configuringTool
   if (hasNothingToShow) return null
 
   const availableTools = tools ?? []
@@ -191,21 +198,16 @@ export const ToolActionBar: React.FC<ToolActionBarProps> = ({ selection, onClear
                 ) : (
                   availableTools.map((tool) => {
                     const fitsSelection = selectionAllowsTool(tool, selection)
-                    const needsConfig = requiresConfiguration(tool)
                     return (
                       <DropdownMenuItem
                         key={tool.slug}
-                        disabled={!fitsSelection || needsConfig}
-                        onSelect={() => runTool(tool)}
+                        disabled={!fitsSelection}
+                        onSelect={() => handleToolSelect(tool)}
                         className="flex-col items-start gap-0.5"
                       >
                         <span className="text-xs font-semibold">{tool.label}</span>
                         <span className="text-[10px] text-muted-foreground">
-                          {!fitsSelection
-                            ? describeMismatch(tool, selection)
-                            : needsConfig
-                              ? "Needs configuration"
-                              : tool.description}
+                          {fitsSelection ? tool.description : describeMismatch(tool, selection)}
                         </span>
                       </DropdownMenuItem>
                     )
@@ -225,6 +227,22 @@ export const ToolActionBar: React.FC<ToolActionBarProps> = ({ selection, onClear
             </Button>
           </div>
         </Card>
+      )}
+
+      {configuringTool && (
+        <ToolDialog
+          tool={configuringTool}
+          selection={selection}
+          open
+          onOpenChange={(open) => {
+            if (!open) setConfiguringTool(null)
+          }}
+          onSubmit={(params) => {
+            const tool = configuringTool
+            setConfiguringTool(null)
+            runTool(tool, params)
+          }}
+        />
       )}
     </div>
   )
