@@ -356,8 +356,10 @@ func copyPagesFromParents(ctx context.Context, docID string, pages []splitPage, 
 // buildSourcePages groups a tool's flat page map by parent document.
 //
 // The derived pages' dimensions come from the freshly split output rather than
-// from the parent, so Rotate needs no special case: a page rotated by 90
-// degrees already reports its swapped width and height out of the splitter.
+// from the parent, so a tool that genuinely changes page geometry needs no
+// special case here. Rotation is not such a tool: pdfcpu sets /Rotate and
+// leaves the MediaBox alone, so a rotated page measures the same as its parent
+// (see pdf.TestRotateDoesNotSwapReportedDimensions).
 //
 // Parents are returned in first-appearance order, which keeps Merge's inserts
 // in the user's chosen input order.

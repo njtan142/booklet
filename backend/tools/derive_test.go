@@ -69,7 +69,7 @@ func TestBuildSourcePagesIdentityMap(t *testing.T) {
 		t.Fatalf("expected 2 mapped pages, got %d", len(got[0].Mapping))
 	}
 
-	// The derived page's own storage path and its rotated dimensions must be
+	// The derived page's own storage path and its measured dimensions must be
 	// carried, not the parent's: reusing the parent's path would make two
 	// documents share one page object.
 	first := got[0].Mapping[0]
@@ -80,7 +80,7 @@ func TestBuildSourcePagesIdentityMap(t *testing.T) {
 		t.Errorf("mapping storage path = %q, want the derived page's own object", first.StoragePath)
 	}
 	if first.Width != 842 || first.Height != 595 {
-		t.Errorf("mapping dimensions = %vx%v, want the derived page's swapped 842x595", first.Width, first.Height)
+		t.Errorf("mapping dimensions = %vx%v, want the derived page's measured 842x595", first.Width, first.Height)
 	}
 }
 

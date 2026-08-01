@@ -27,9 +27,12 @@ type PageMap struct {
 	// library invariant is that every page row points at its own object, so a
 	// copied row must not reuse the parent's path.
 	StoragePath string
-	// Width and Height are the derived page's dimensions in points. Rotate
-	// swaps them on 90 and 270; tools that leave geometry alone may pass zero
-	// to inherit the parent's values.
+	// Width and Height are the derived page's dimensions in points, as measured
+	// from the freshly split output. Pass zero to inherit the parent's values.
+	//
+	// Note that a pdfcpu rotation does not change these: it sets the page's
+	// /Rotate entry and leaves the MediaBox alone, so a rotated page reports the
+	// same width and height while still displaying rotated.
 	Width  float64
 	Height float64
 }
