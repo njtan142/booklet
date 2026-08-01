@@ -198,6 +198,14 @@ func GetUser(ctx context.Context) (*User, bool) {
 	return u, ok
 }
 
+// WithUser attaches a session user to a context using the same key RequireAuth
+// does. It exists so other packages — handler tests, and the worker if it ever
+// needs to act as a user — can build an authenticated context without
+// duplicating the unexported context key.
+func WithUser(ctx context.Context, user *User) context.Context {
+	return context.WithValue(ctx, ctxUserKey, user)
+}
+
 // Handlers for Auth routing
 
 func HandleLogin(w http.ResponseWriter, r *http.Request) {
