@@ -130,9 +130,11 @@ func HandleGetBookletPreviewPDF(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		
+		pdf.OptimizePagePDF(ctx, localPath)
+
 		info, err := os.Stat(localPath)
 		if err == nil {
-			logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Downloaded page %d successfully. Size: %d bytes", dbPage.PageNumber, info.Size())
+			logger.Logf(r.Context(), "[HandleGetBookletPreviewPDF] Downloaded and optimized page %d successfully. Size: %d bytes", dbPage.PageNumber, info.Size())
 		}
 		localPagePaths = append(localPagePaths, localPath)
 	}
@@ -238,10 +240,8 @@ func HandleGetBookletPreviewPDF(w http.ResponseWriter, r *http.Request) {
 		offsetX := slotX + (slotWidth-drawW)/2
 		offsetY := slotY + (availHeight-drawH)/2
 
-		tplID := pdfDoc.ImportPage(localPath, 1, "/MediaBox")
-		pdfDoc.UseImportedTemplate(tplID, offsetX, offsetY, drawW, drawH)
-
-		return nil
+		// Import and place template safely with image rendering fallback if gofpdi panics/fails
+		return pdf.DrawPageInSlotSafe(ctx, &pdfDoc, localPath, tempDir, pageNum, offsetX, offsetY, drawW, drawH)
 	}
 
 	if err := drawPageInSlot(targetSheet.LeftPage, false); err != nil {
@@ -682,6 +682,11 @@ func runBackgroundBookletCompilation(bookletID uuid.UUID, docID string, req Book
 	success := false
 
 	defer func() {
+		if r := recover(); r != nil {
+			stack := debug.Stack()
+			rl.Logf("PANIC in runBackgroundBookletCompilation: %v\nStack trace:\n%s", r, string(stack))
+			updateBookletStatus(ctx, bookletID, "failed", "")
+		}
 		duration := time.Since(start)
 		rl.PrintTask(fmt.Sprintf("Booklet Compilation (bookletID=%s)", bookletID), duration, success)
 		runtime.GC()

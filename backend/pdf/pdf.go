@@ -403,7 +403,93 @@ func MergeFilesSafe(files []string, tempDir string) (string, error) {
 	return currentLevel[0], nil
 }
 
+// RenderPageToPNG renders the first page of a PDF file to a PNG image using pdftoppm.
+func RenderPageToPNG(ctx context.Context, pdfPath string, outPNGPath string) error {
+	// We run pdftoppm -png -r 150 -f 1 -l 1 <pdfPath> <tempPrefix>
+	tempPrefix := pdfPath + ".tmpimg"
+	cmd := exec.CommandContext(ctx, "pdftoppm", "-png", "-r", "150", "-f", "1", "-l", "1", pdfPath, tempPrefix)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("pdftoppm failed (stderr: %s): %w", stderr.String(), err)
+	}
 
+	// pdftoppm appends "-1.png" since we rendered page 1
+	generatedPath := tempPrefix + "-1.png"
+	defer os.Remove(generatedPath)
+
+	// Move the generated file to the desired output path
+	content, err := os.ReadFile(generatedPath)
+	if err != nil {
+		return fmt.Errorf("failed to read generated PNG file: %w", err)
+	}
+
+	if err := os.WriteFile(outPNGPath, content, 0644); err != nil {
+		return fmt.Errorf("failed to write output PNG file: %w", err)
+	}
+
+	return nil
+}
+
+// DrawPageInSlotSafe attempts to import a PDF page using gofpdi. If importing panics or fails,
+// it falls back to rendering the page to a PNG using pdftoppm and draws it as an image.
+func DrawPageInSlotSafe(ctx context.Context, pdfDoc *gopdf.GoPdf, localPath string, tempDir string, pageNum int, offsetX, offsetY, drawW, drawH float64) error {
+	var tplID int
+	var importErr error
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				importErr = fmt.Errorf("panic during ImportPage: %v", r)
+			}
+		}()
+		tplID = pdfDoc.ImportPage(localPath, 1, "/MediaBox")
+	}()
+
+	if importErr != nil {
+		logger.Logf(ctx, "[DrawPageInSlotSafe] Recovery: ImportPage failed/panicked for page %d: %v. Falling back to image rendering.", pageNum, importErr)
+		pngPath := filepath.Join(tempDir, fmt.Sprintf("page_%d.png", pageNum))
+		if err := RenderPageToPNG(ctx, localPath, pngPath); err != nil {
+			return fmt.Errorf("failed to render page %d to image fallback: %w", pageNum, err)
+		}
+		
+		logger.Logf(ctx, "[DrawPageInSlotSafe] Drawing page %d image fallback at (%.2f, %.2f) size (%.2f, %.2f)", pageNum, offsetX, offsetY, drawW, drawH)
+		if err := pdfDoc.Image(pngPath, offsetX, offsetY, &gopdf.Rect{W: drawW, H: drawH}); err != nil {
+			return fmt.Errorf("failed to draw page %d image fallback: %w", pageNum, err)
+		}
+		return nil
+	}
+
+	logger.Logf(ctx, "[DrawPageInSlotSafe] Successfully imported template for page %d (tplID=%d)", pageNum, tplID)
+	pdfDoc.UseImportedTemplate(tplID, offsetX, offsetY, drawW, drawH)
+	logger.Logf(ctx, "[DrawPageInSlotSafe] Placed template for page %d inside slot", pageNum)
+	return nil
+}
+
+// OptimizePagePDF optimizes a single page PDF file in place to prevent gofpdi importer crashes/panics.
+func OptimizePagePDF(ctx context.Context, localPath string) {
+	conf := model.NewDefaultConfiguration()
+	conf.ValidationMode = model.ValidationRelaxed
+	conf.WriteObjectStream = false
+	conf.WriteXRefStream = false
+
+	tempOptPath := localPath + ".opt.pdf"
+	if err := api.OptimizeFile(localPath, tempOptPath, conf); err != nil {
+		logger.Logf(ctx, "Warning: failed to optimize PDF %s: %v. Proceeding with original file.", localPath, err)
+		_ = os.Remove(tempOptPath)
+		return
+	}
+
+	// Replace original file with the optimized one
+	if err := os.Remove(localPath); err != nil {
+		logger.Logf(ctx, "Warning: failed to remove original PDF %s: %v. Proceeding with original file.", localPath, err)
+		_ = os.Remove(tempOptPath)
+		return
+	}
+	if err := os.Rename(tempOptPath, localPath); err != nil {
+		logger.Logf(ctx, "Warning: failed to rename optimized PDF %s: %v. Proceeding with original file.", localPath, err)
+		return
+	}
+}
 
 // CompileBooklet programmatically positions single-page PDFs onto a landscape canvas using gopdf
 func CompileBooklet(ctx context.Context, dbPages []DBPageInfo, config BookletConfig) (string, error) {
@@ -430,6 +516,7 @@ func CompileBooklet(ctx context.Context, dbPages []DBPageInfo, config BookletCon
 		if err != nil {
 			return "", fmt.Errorf("failed to download page %d: %w", dbPage.PageNumber, err)
 		}
+		OptimizePagePDF(ctx, localPath)
 		localPagePaths = append(localPagePaths, localPath)
 		pagesMap[dbPage.PageNumber] = dbPage
 	}
@@ -473,6 +560,7 @@ func CompileBooklet(ctx context.Context, dbPages []DBPageInfo, config BookletCon
 	// Draw sheets
 	for _, sheet := range sheets {
 		pdfDoc.AddPage()
+		logger.Logf(ctx, "[CompileBooklet] Processing sheet: LeftPage=%d, RightPage=%d", sheet.LeftPage, sheet.RightPage)
 
 		// Helper function to draw page inside a slot (left or right)
 		drawPageInSlot := func(pageNum int, isRightSlot bool) error {
@@ -484,9 +572,11 @@ func CompileBooklet(ctx context.Context, dbPages []DBPageInfo, config BookletCon
 			// Since pageNum is 1-based original page index
 			dbPage, exists := pagesMap[pageNum]
 			if !exists {
+				logger.Logf(ctx, "[CompileBooklet] Warning: page %d not found in pagesMap", pageNum)
 				return nil // Page out of scope
 			}
 			localPath := filepath.Join(tempDir, fmt.Sprintf("page_%d.pdf", pageNum))
+			logger.Logf(ctx, "[CompileBooklet] drawPageInSlot: pageNum=%d, isRightSlot=%t, localPath=%s", pageNum, isRightSlot, localPath)
 
 			// Calculate slot bounds
 			var slotX float64
@@ -509,11 +599,8 @@ func CompileBooklet(ctx context.Context, dbPages []DBPageInfo, config BookletCon
 			offsetX := slotX + (slotWidth-drawW)/2
 			offsetY := slotY + (availHeight-drawH)/2
 
-			// Import and place template
-			tplID := pdfDoc.ImportPage(localPath, 1, "/MediaBox")
-			pdfDoc.UseImportedTemplate(tplID, offsetX, offsetY, drawW, drawH)
-
-			return nil
+			// Import and place template safely with image rendering fallback if gofpdi panics/fails
+			return DrawPageInSlotSafe(ctx, &pdfDoc, localPath, tempDir, pageNum, offsetX, offsetY, drawW, drawH)
 		}
 
 		// Draw Left Page
@@ -664,6 +751,7 @@ func CompileBookletSlice(ctx context.Context, dbPages []DBPageInfo, config Bookl
 		if err != nil {
 			return fmt.Errorf("failed to download page %d: %w", pageNum, err)
 		}
+		OptimizePagePDF(ctx, localPath)
 	}
 
 	// Create new PDF document
@@ -730,11 +818,8 @@ func CompileBookletSlice(ctx context.Context, dbPages []DBPageInfo, config Bookl
 			offsetX := slotX + (slotWidth-drawW)/2
 			offsetY := slotY + (availHeight-drawH)/2
 
-			// Import and place template
-			tplID := pdfDoc.ImportPage(localPath, 1, "/MediaBox")
-			pdfDoc.UseImportedTemplate(tplID, offsetX, offsetY, drawW, drawH)
-
-			return nil
+			// Import and place template safely with image rendering fallback if gofpdi panics/fails
+			return DrawPageInSlotSafe(ctx, &pdfDoc, localPath, tempDir, pageNum, offsetX, offsetY, drawW, drawH)
 		}
 
 		// Draw Left Page
