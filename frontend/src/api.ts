@@ -11,6 +11,10 @@ export interface AuthStatus {
   user?: User;
 }
 
+// Only 'pdf' documents are split and embedded. 'source' is a non-PDF upload
+// awaiting conversion, 'export' is a download-only artifact with no pages.
+export type DocumentKind = "pdf" | "source" | "export";
+
 export interface DocumentInfo {
   id: string;
   name: string;
@@ -18,6 +22,8 @@ export interface DocumentInfo {
   split_pages: number;
   parsed_pages: number;
   status: "queued" | "processing" | "ready" | "failed";
+  kind: DocumentKind;
+  mime_type: string;
   created_at: string;
   updated_at: string;
 }
@@ -67,6 +73,89 @@ export interface SearchResult {
   page_number: number;
   text_snippet: string;
   similarity: number;
+}
+
+// Mirrors backend/tools.ParamType.
+export type ToolParamType =
+  | "string"
+  | "int"
+  | "bool"
+  | "enum"
+  | "page_range"
+  | "password";
+
+export interface ToolParam {
+  name: string;
+  label: string;
+  type: ToolParamType;
+  required: boolean;
+  default?: unknown;
+  options?: string[];
+  min?: number;
+  max?: number;
+  help?: string;
+}
+
+// Mirrors backend/tools.Tool. The catalog is data-driven so a tool registered
+// in the backend appears in the menu without a frontend change.
+export interface Tool {
+  slug: string;
+  label: string;
+  description: string;
+  icon: string;
+  params: ToolParam[];
+  // max_inputs of 0 means unbounded (Merge).
+  min_inputs: number;
+  max_inputs: number;
+  input_kinds: DocumentKind[];
+  preserves_text: boolean;
+}
+
+export type JobStatus = "queued" | "running" | "completed" | "failed";
+
+export interface Job {
+  id: string;
+  tool_slug: string;
+  status: JobStatus;
+  params: Record<string, unknown>;
+  progress_current: number;
+  progress_total: number;
+  progress_step?: string;
+  error?: string;
+  attempt: number;
+  max_attempts: number;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+  input_document_ids: string[];
+  output_document_ids: string[];
+}
+
+export interface DocumentPermissions {
+  document_id: string;
+  owner_id: string;
+  owner_email?: string;
+  group_id?: string;
+  group_name?: string;
+  // Nine rwx bits, e.g. 420 = 0o644.
+  mode: number;
+}
+
+export interface Group {
+  id: string;
+  name: string;
+  is_personal: boolean;
+  created_at: string;
+  member_count?: number;
+}
+
+// selectionAllowsTool reports whether a tool can run on the current selection.
+// The API enforces arity and kind independently; this only decides whether the
+// menu offers the tool at all.
+export function selectionAllowsTool(tool: Tool, selection: DocumentInfo[]): boolean {
+  if (selection.length < tool.min_inputs) return false;
+  if (tool.max_inputs > 0 && selection.length > tool.max_inputs) return false;
+  return selection.every((doc) => tool.input_kinds.includes(doc.kind));
 }
 
 // Fetch helper with credentials
@@ -212,4 +301,39 @@ export const api = {
     method: "POST",
     body: JSON.stringify({ batch_size: batchSize, completed_sheets: completedSheets }),
   }),
+
+  // Tools & jobs
+  listTools: () => apiFetch<Tool[]>("/tools"),
+
+  createToolJob: (
+    toolSlug: string,
+    inputDocumentIds: string[],
+    params: Record<string, unknown> = {}
+  ) => apiFetch<{ job_id: string }>("/tools/jobs", {
+    method: "POST",
+    body: JSON.stringify({
+      tool_slug: toolSlug,
+      input_document_ids: inputDocumentIds,
+      params,
+    }),
+  }),
+
+  getToolJob: (jobId: string) => apiFetch<Job>(`/tools/jobs/${jobId}`),
+
+  listToolJobs: (limit?: number) =>
+    apiFetch<Job[]>(limit ? `/tools/jobs?limit=${limit}` : "/tools/jobs"),
+
+  // Permissions & groups
+  getDocumentPermissions: (docId: string) =>
+    apiFetch<DocumentPermissions>(`/documents/${docId}/permissions`),
+
+  updateDocumentPermissions: (
+    docId: string,
+    update: { owner_id?: string; group_id?: string; mode?: number }
+  ) => apiFetch<DocumentPermissions>(`/documents/${docId}/permissions`, {
+    method: "PUT",
+    body: JSON.stringify(update),
+  }),
+
+  listGroups: () => apiFetch<Group[]>("/groups"),
 };

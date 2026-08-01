@@ -38,8 +38,13 @@ type DocumentResponse struct {
 	SplitPages  int       `json:"split_pages"`
 	ParsedPages int       `json:"parsed_pages"`
 	Status      string    `json:"status"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	// Kind and MimeType drive the frontend tool menu: a tool declares the kinds
+	// it accepts, so the client cannot offer Rotate on a DOCX source without
+	// them. The API enforces the same rule, this only avoids offering the tool.
+	Kind      string    `json:"kind"`
+	MimeType  string    `json:"mime_type"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 func HandleListDocuments(w http.ResponseWriter, r *http.Request) {
@@ -67,7 +72,7 @@ func HandleListDocuments(w http.ResponseWriter, r *http.Request) {
 	// authenticated user sees every document in the system.
 	// total_pages is nullable for non-paginated kinds ('source'/'export'), so
 	// coalesce it rather than scanning NULL into an int.
-	query := `SELECT id, name, COALESCE(total_pages, 0), split_pages, parsed_pages, status, created_at, updated_at
+	query := `SELECT id, name, COALESCE(total_pages, 0), split_pages, parsed_pages, status, kind, mime_type, created_at, updated_at
 		FROM documents WHERE is_dismissed = FALSE`
 	var args []any
 	if !permissions.IsAdmin(r) {
@@ -95,7 +100,7 @@ func HandleListDocuments(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var d DocumentResponse
 		var id string
-		if err := rows.Scan(&id, &d.Name, &d.TotalPages, &d.SplitPages, &d.ParsedPages, &d.Status, &d.CreatedAt, &d.UpdatedAt); err != nil {
+		if err := rows.Scan(&id, &d.Name, &d.TotalPages, &d.SplitPages, &d.ParsedPages, &d.Status, &d.Kind, &d.MimeType, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			logger.Logf(r.Context(), "Error: failed to scan document row: %v", err)
 			http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -173,8 +178,8 @@ func HandleGetDocument(w http.ResponseWriter, r *http.Request) {
 	var d DocumentDetailResponse
 	var id string
 	err := db.DB.QueryRow(`
-		SELECT id, name, COALESCE(total_pages, 0), split_pages, parsed_pages, status, created_at, updated_at 
-		FROM documents WHERE id = $1`, docID).Scan(&id, &d.Name, &d.TotalPages, &d.SplitPages, &d.ParsedPages, &d.Status, &d.CreatedAt, &d.UpdatedAt)
+		SELECT id, name, COALESCE(total_pages, 0), split_pages, parsed_pages, status, kind, mime_type, created_at, updated_at 
+		FROM documents WHERE id = $1`, docID).Scan(&id, &d.Name, &d.TotalPages, &d.SplitPages, &d.ParsedPages, &d.Status, &d.Kind, &d.MimeType, &d.CreatedAt, &d.UpdatedAt)
 	
 	if err == sql.ErrNoRows {
 		logger.Logf(r.Context(), "GetDocument: document %s not found", docID)
