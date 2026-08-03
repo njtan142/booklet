@@ -1,11 +1,8 @@
 package handlers
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
-	"strings"
 	"time"
 
 	"booklet/db"
@@ -16,43 +13,17 @@ import (
 // HandleCleanStaleProcesses triggers FailStaleProcessingDocuments to cleanup stale document/booklet states.
 // Exposes this function as a secured administrative API route, requiring X-API-Key auth.
 func HandleCleanStaleProcesses(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	adminKey := os.Getenv("ADMIN_API_KEY")
-	if adminKey == "" {
-		// Fallback for development if not explicitly configured in env
-		adminKey = "dev-admin-key"
-	}
-
-	reqKey := r.Header.Get("X-API-Key")
-	if reqKey == "" {
-		// Also allow Bearer token under Authorization
-		authHeader := r.Header.Get("Authorization")
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			reqKey = strings.TrimPrefix(authHeader, "Bearer ")
-		}
-	}
-
-	if reqKey != adminKey {
-		logger.Logf(r.Context(), "HandleCleanStaleProcesses: unauthorized access attempt")
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	if !requireMethod(w, r, "HandleCleanStaleProcesses", http.MethodPost) || !requireAPIKey(w, r, "HandleCleanStaleProcesses") {
 		return
 	}
 
 	logger.Logf(r.Context(), "HandleCleanStaleProcesses: triggering stale background processes cleanup")
 	err := db.FailStaleProcessingDocuments()
-	if err != nil {
-		logger.Logf(r.Context(), "Error: failed to clean stale processes: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if handleServerError(w, r, "HandleCleanStaleProcesses", "failed to clean stale processes", err) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
+	respondJSON(w, http.StatusOK, map[string]string{
 		"status":  "success",
 		"message": "Stale background processes cleaned up successfully",
 	})
@@ -61,34 +32,12 @@ func HandleCleanStaleProcesses(w http.ResponseWriter, r *http.Request) {
 // HandleGetSMTPConfig retrieves the system-wide SMTP settings.
 // Requires X-API-Key auth.
 func HandleGetSMTPConfig(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	adminKey := os.Getenv("ADMIN_API_KEY")
-	if adminKey == "" {
-		adminKey = "dev-admin-key"
-	}
-
-	reqKey := r.Header.Get("X-API-Key")
-	if reqKey == "" {
-		authHeader := r.Header.Get("Authorization")
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			reqKey = strings.TrimPrefix(authHeader, "Bearer ")
-		}
-	}
-
-	if reqKey != adminKey {
-		logger.Logf(r.Context(), "HandleGetSMTPConfig: unauthorized access attempt")
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	if !requireMethod(w, r, "HandleGetSMTPConfig", http.MethodGet) || !requireAPIKey(w, r, "HandleGetSMTPConfig") {
 		return
 	}
 
 	cfg, err := smtp.GetSMTPConfig(r.Context())
-	if err != nil {
-		logger.Logf(r.Context(), "Error: failed to fetch SMTP config: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if handleServerError(w, r, "HandleGetSMTPConfig", "failed to fetch SMTP config", err) {
 		return
 	}
 
@@ -97,68 +46,37 @@ func HandleGetSMTPConfig(w http.ResponseWriter, r *http.Request) {
 		cfg.Password = "********"
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(cfg)
+	respondJSON(w, http.StatusOK, cfg)
 }
 
 // HandleSaveSMTPConfig saves the system-wide SMTP settings.
 // Requires X-API-Key auth.
 func HandleSaveSMTPConfig(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	adminKey := os.Getenv("ADMIN_API_KEY")
-	if adminKey == "" {
-		adminKey = "dev-admin-key"
-	}
-
-	reqKey := r.Header.Get("X-API-Key")
-	if reqKey == "" {
-		authHeader := r.Header.Get("Authorization")
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			reqKey = strings.TrimPrefix(authHeader, "Bearer ")
-		}
-	}
-
-	if reqKey != adminKey {
-		logger.Logf(r.Context(), "HandleSaveSMTPConfig: unauthorized access attempt")
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	if !requireMethod(w, r, "HandleSaveSMTPConfig", http.MethodPost) || !requireAPIKey(w, r, "HandleSaveSMTPConfig") {
 		return
 	}
 
 	var cfg smtp.SMTPConfig
-	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
-		logger.Logf(r.Context(), "Error: failed to decode SMTP config: %v", err)
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+	if !decodeJSON(w, r, "HandleSaveSMTPConfig", &cfg) {
 		return
 	}
 
 	// Basic validation
-	if cfg.Host == "" {
-		http.Error(w, "SMTP host is required", http.StatusBadRequest)
+	if cfg.Host == "" && handleBadRequest(w, r, "HandleSaveSMTPConfig", "missing SMTP host", "SMTP host is required") {
 		return
 	}
-	if cfg.Port <= 0 {
-		http.Error(w, "SMTP port must be a positive integer", http.StatusBadRequest)
+	if cfg.Port <= 0 && handleBadRequest(w, r, "HandleSaveSMTPConfig", "invalid SMTP port", "SMTP port must be a positive integer") {
 		return
 	}
-	if cfg.FromEmail == "" {
-		http.Error(w, "Sender email is required", http.StatusBadRequest)
+	if cfg.FromEmail == "" && handleBadRequest(w, r, "HandleSaveSMTPConfig", "missing sender email", "Sender email is required") {
 		return
 	}
 
-	if err := smtp.SaveSMTPConfig(r.Context(), cfg); err != nil {
-		logger.Logf(r.Context(), "Error: failed to save SMTP config: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err := smtp.SaveSMTPConfig(r.Context(), cfg); handleServerError(w, r, "HandleSaveSMTPConfig", "failed to save SMTP config", err) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
+	respondJSON(w, http.StatusOK, map[string]string{
 		"status":  "success",
 		"message": "SMTP configuration saved successfully",
 	})
@@ -167,27 +85,7 @@ func HandleSaveSMTPConfig(w http.ResponseWriter, r *http.Request) {
 // HandleTestSMTP sends a test email to verify SMTP configuration.
 // Requires X-API-Key auth.
 func HandleTestSMTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	adminKey := os.Getenv("ADMIN_API_KEY")
-	if adminKey == "" {
-		adminKey = "dev-admin-key"
-	}
-
-	reqKey := r.Header.Get("X-API-Key")
-	if reqKey == "" {
-		authHeader := r.Header.Get("Authorization")
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			reqKey = strings.TrimPrefix(authHeader, "Bearer ")
-		}
-	}
-
-	if reqKey != adminKey {
-		logger.Logf(r.Context(), "HandleTestSMTP: unauthorized access attempt")
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	if !requireMethod(w, r, "HandleTestSMTP", http.MethodPost) || !requireAPIKey(w, r, "HandleTestSMTP") {
 		return
 	}
 
@@ -197,14 +95,11 @@ func HandleTestSMTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req TestSMTPRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		logger.Logf(r.Context(), "Error: failed to decode test SMTP request: %v", err)
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+	if !decodeJSON(w, r, "HandleTestSMTP", &req) {
 		return
 	}
 
-	if req.To == "" {
-		http.Error(w, "recipient email 'to' is required", http.StatusBadRequest)
+	if req.To == "" && handleBadRequest(w, r, "HandleTestSMTP", "missing recipient email", "recipient email 'to' is required") {
 		return
 	}
 
@@ -226,15 +121,11 @@ func HandleTestSMTP(w http.ResponseWriter, r *http.Request) {
 	`, time.Now().Format(time.RFC1123))
 
 	err := smtp.SendEmail(r.Context(), req.Config, req.To, subject, htmlBody, "", nil)
-	if err != nil {
-		logger.Logf(r.Context(), "Error: SMTP test email delivery failed: %v", err)
-		http.Error(w, fmt.Sprintf("SMTP test failed: %v", err), http.StatusInternalServerError)
+	if handleServerError(w, r, "HandleTestSMTP", fmt.Sprintf("SMTP test failed: %v", err), err) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
+	respondJSON(w, http.StatusOK, map[string]string{
 		"status":  "success",
 		"message": "Test email successfully sent to " + req.To,
 	})
@@ -247,6 +138,6 @@ func HandleSMTPConfig(w http.ResponseWriter, r *http.Request) {
 	} else if r.Method == http.MethodPost {
 		HandleSaveSMTPConfig(w, r)
 	} else {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		handleMethodNotAllowed(w, r, "HandleSMTPConfig")
 	}
 }

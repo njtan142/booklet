@@ -50,19 +50,15 @@ type JobResponse struct {
 }
 
 // HandleListTools serves the tool catalog that drives the frontend menu.
-//
-// Only implemented tools whose engine is reachable are listed: advertising a
-// tool behind a downed sidecar would let a user queue work that can only fail.
 func HandleListTools(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, "HandleListTools", http.MethodGet) {
 		return
 	}
 
 	catalog := tools.Available(r.Context())
 	logger.Logf(r.Context(), "HandleListTools: returning %d available tool(s)", len(catalog))
 
-	writeJSON(w, http.StatusOK, catalog)
+	respondJSON(w, http.StatusOK, catalog)
 }
 
 // HandleToolJobs routes POST (enqueue) and GET (list) on /api/tools/jobs.
@@ -73,7 +69,7 @@ func HandleToolJobs(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		handleListToolJobs(w, r)
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		handleMethodNotAllowed(w, r, "HandleToolJobs")
 	}
 }
 
@@ -84,56 +80,40 @@ type createJobRequest struct {
 }
 
 // handleCreateToolJob validates a job completely before writing it.
-//
-// Everything checkable up front — unknown slug, wrong arity, wrong document
-// kind, missing permission, malformed params — is rejected synchronously with a
-// 4xx. Queueing a job that is already known to be unrunnable would only hand
-// the caller a job id to poll until it fails.
 func handleCreateToolJob(w http.ResponseWriter, r *http.Request) {
 	// A job row references users(id), so this endpoint needs a real session even
 	// though the admin key bypasses the per-document checks below.
-	userID := permissions.CurrentUserID(r)
-	if userID == "" {
-		logger.Logf(r.Context(), "handleCreateToolJob: no authenticated user on request")
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	userID, ok := requireUser(w, r, "handleCreateToolJob")
+	if !ok {
 		return
 	}
 
 	var req createJobRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		logger.Logf(r.Context(), "handleCreateToolJob: failed to decode request: %v", err)
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+	if !decodeJSON(w, r, "handleCreateToolJob", &req) {
 		return
 	}
 
 	tool, ok := tools.Get(req.ToolSlug)
 	if !ok || tool.Run == nil {
-		logger.Logf(r.Context(), "handleCreateToolJob: unknown or unimplemented tool %q", req.ToolSlug)
-		http.Error(w, fmt.Sprintf("unknown tool %q", req.ToolSlug), http.StatusBadRequest)
+		handleBadRequest(w, r, "handleCreateToolJob", fmt.Sprintf("unknown tool %q", req.ToolSlug), fmt.Sprintf("unknown tool %q", req.ToolSlug))
 		return
 	}
 	if tool.Available != nil && !tool.Available(r.Context()) {
-		logger.Logf(r.Context(), "handleCreateToolJob: tool %s is unavailable", tool.Slug)
-		http.Error(w, fmt.Sprintf("tool %q is currently unavailable", tool.Slug), http.StatusServiceUnavailable)
+		handleServiceUnavailable(w, r, "handleCreateToolJob", fmt.Sprintf("tool %s is unavailable", tool.Slug), fmt.Sprintf("tool %q is currently unavailable", tool.Slug))
 		return
 	}
 
-	if err := tool.CheckArity(len(req.InputDocumentIDs)); err != nil {
-		logger.Logf(r.Context(), "handleCreateToolJob: %v", err)
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if err := tool.CheckArity(len(req.InputDocumentIDs)); err != nil && handleBadRequest(w, r, "handleCreateToolJob", err.Error(), err.Error()) {
 		return
 	}
-	if len(req.InputDocumentIDs) > maxJobInputs {
-		http.Error(w, fmt.Sprintf("a job accepts at most %d input documents", maxJobInputs), http.StatusBadRequest)
+	if len(req.InputDocumentIDs) > maxJobInputs && handleBadRequest(w, r, "handleCreateToolJob", "too many job inputs", fmt.Sprintf("a job accepts at most %d input documents", maxJobInputs)) {
 		return
 	}
 
 	// Reject malformed ids here rather than letting Postgres fail the uuid cast
 	// halfway through the insert.
 	for _, id := range req.InputDocumentIDs {
-		if _, err := uuid.Parse(id); err != nil {
-			logger.Logf(r.Context(), "handleCreateToolJob: invalid document id %q", id)
-			http.Error(w, "invalid document id: "+id, http.StatusBadRequest)
+		if _, err := uuid.Parse(id); err != nil && handleBadRequest(w, r, "handleCreateToolJob", "invalid document id: "+id, "invalid document id: "+id) {
 			return
 		}
 	}
@@ -143,9 +123,7 @@ func handleCreateToolJob(w http.ResponseWriter, r *http.Request) {
 		if len(params) == 0 {
 			params = json.RawMessage(`{}`)
 		}
-		if err := tool.Validate(params); err != nil {
-			logger.Logf(r.Context(), "handleCreateToolJob: %s rejected params: %v", tool.Slug, err)
-			http.Error(w, err.Error(), http.StatusBadRequest)
+		if err := tool.Validate(params); err != nil && handleBadRequest(w, r, "handleCreateToolJob", fmt.Sprintf("%s rejected params: %v", tool.Slug, err), err.Error()) {
 			return
 		}
 	}
@@ -155,42 +133,30 @@ func handleCreateToolJob(w http.ResponseWriter, r *http.Request) {
 		// must be able to both read the input and derive from it.
 		allowed, denied, err := permissions.CheckMany(r.Context(), req.InputDocumentIDs, userID,
 			permissions.PermRead|permissions.PermExecute)
-		if err != nil {
-			logger.Logf(r.Context(), "handleCreateToolJob: permission check failed: %v", err)
-			http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
+		if handleServerError(w, r, "handleCreateToolJob", "database error", err) {
 			return
 		}
-		if !allowed {
-			// 404, not 403: a denial must not confirm that the document exists.
-			logger.Logf(r.Context(), "handleCreateToolJob: user %s denied on %d input(s): %v", userID, len(denied), denied)
-			http.Error(w, "document not found", http.StatusNotFound)
+		if !allowed && handleNotFound(w, r, "handleCreateToolJob", fmt.Sprintf("user %s denied on %d input(s)", userID, len(denied)), "document not found") {
 			return
 		}
 	}
 
 	kinds, err := documentKinds(r.Context(), req.InputDocumentIDs)
-	if err != nil {
-		logger.Logf(r.Context(), "handleCreateToolJob: failed to read input kinds: %v", err)
-		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
+	if handleServerError(w, r, "handleCreateToolJob", "database error", err) {
 		return
 	}
 	for _, id := range req.InputDocumentIDs {
 		kind, found := kinds[id]
-		if !found {
-			http.Error(w, "document not found", http.StatusNotFound)
+		if !found && handleNotFound(w, r, "handleCreateToolJob", "document not found", "document not found") {
 			return
 		}
-		if !tool.AcceptsKind(kind) {
-			logger.Logf(r.Context(), "handleCreateToolJob: %s rejects kind %q on document %s", tool.Slug, kind, id)
-			http.Error(w, fmt.Sprintf("%s does not accept a %q document", tool.Slug, kind), http.StatusBadRequest)
+		if !tool.AcceptsKind(kind) && handleBadRequest(w, r, "handleCreateToolJob", fmt.Sprintf("%s rejects kind %q on document %s", tool.Slug, kind, id), fmt.Sprintf("%s does not accept a %q document", tool.Slug, kind)) {
 			return
 		}
 	}
 
 	jobID, err := jobs.Enqueue(r.Context(), userID, tool.Slug, req.Params, req.InputDocumentIDs)
-	if err != nil {
-		logger.Logf(r.Context(), "handleCreateToolJob: failed to enqueue %s: %v", tool.Slug, err)
-		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
+	if handleServerError(w, r, "handleCreateToolJob", "database error", err) {
 		return
 	}
 
@@ -199,13 +165,12 @@ func handleCreateToolJob(w http.ResponseWriter, r *http.Request) {
 
 	// 202, not 201: the work has been accepted, not performed. The caller polls
 	// GET /api/tools/jobs/{id} for the outcome.
-	writeJSON(w, http.StatusAccepted, map[string]string{"job_id": jobID})
+	respondJSON(w, http.StatusAccepted, map[string]string{"job_id": jobID})
 }
 
 func handleListToolJobs(w http.ResponseWriter, r *http.Request) {
-	userID := permissions.CurrentUserID(r)
-	if userID == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	userID, ok := requireUser(w, r, "handleListToolJobs")
+	if !ok {
 		return
 	}
 
@@ -217,9 +182,7 @@ func handleListToolJobs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	list, err := jobs.ListByUser(r.Context(), userID, limit)
-	if err != nil {
-		logger.Logf(r.Context(), "handleListToolJobs: failed to list jobs for %s: %v", userID, err)
-		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
+	if handleServerError(w, r, "handleListToolJobs", "database error", err) {
 		return
 	}
 
@@ -229,43 +192,36 @@ func handleListToolJobs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	logger.Logf(r.Context(), "handleListToolJobs: returning %d job(s) for user %s", len(out), userID)
-	writeJSON(w, http.StatusOK, out)
+	respondJSON(w, http.StatusOK, out)
 }
 
 // HandleGetToolJob returns one job's status for the user who created it.
 func HandleGetToolJob(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, "HandleGetToolJob", http.MethodGet) {
 		return
 	}
 
-	jobID := r.PathValue("id")
-	if _, err := uuid.Parse(jobID); err != nil {
-		http.Error(w, "invalid UUID format", http.StatusBadRequest)
+	jobID, ok := parseUUIDParam(w, r, "HandleGetToolJob", "id")
+	if !ok {
 		return
 	}
 
 	job, err := jobs.Get(r.Context(), jobID)
-	if errors.Is(err, jobs.ErrNotFound) {
-		http.Error(w, "job not found", http.StatusNotFound)
+	if errors.Is(err, jobs.ErrNotFound) && handleNotFound(w, r, "HandleGetToolJob", "job not found", "job not found") {
 		return
 	}
-	if err != nil {
-		logger.Logf(r.Context(), "HandleGetToolJob: failed to load job %s: %v", jobID, err)
-		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
+	if handleServerError(w, r, "HandleGetToolJob", "database error", err) {
 		return
 	}
 
 	// Jobs carry no mode bits, so ownership is the whole access rule: a job is
 	// visible to the user who created it, or to the admin key. A mismatch is a
 	// 404 for the same reason documents are.
-	if !permissions.IsAdmin(r) && job.UserID != permissions.CurrentUserID(r) {
-		logger.Logf(r.Context(), "HandleGetToolJob: user %s denied on job %s", permissions.CurrentUserID(r), jobID)
-		http.Error(w, "job not found", http.StatusNotFound)
+	if !permissions.IsAdmin(r) && job.UserID != permissions.CurrentUserID(r) && handleNotFound(w, r, "HandleGetToolJob", fmt.Sprintf("user %s denied on job %s", permissions.CurrentUserID(r), jobID), "job not found") {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, toJobResponse(job))
+	respondJSON(w, http.StatusOK, toJobResponse(job))
 }
 
 // documentKinds maps document id to kind for the given ids. Ids that do not
@@ -333,10 +289,6 @@ func toJobResponse(j *jobs.Job) JobResponse {
 }
 
 // redactParams blanks every password-typed parameter before a job is returned.
-//
-// Protect and Unlock store the PDF password in jobs.params, and the job detail
-// endpoint is polled continuously by the frontend; echoing it back would put the
-// password in every poll response and in any log that captures one.
 func redactParams(toolSlug string, params json.RawMessage) json.RawMessage {
 	if len(params) == 0 {
 		return json.RawMessage(`{}`)
@@ -359,8 +311,6 @@ func redactParams(toolSlug string, params json.RawMessage) json.RawMessage {
 
 	var decoded map[string]any
 	if err := json.Unmarshal(params, &decoded); err != nil {
-		// Unparseable params cannot be selectively redacted; drop them wholesale
-		// rather than risk returning a secret.
 		return json.RawMessage(`{}`)
 	}
 	for _, name := range secrets {
@@ -374,10 +324,4 @@ func redactParams(toolSlug string, params json.RawMessage) json.RawMessage {
 		return json.RawMessage(`{}`)
 	}
 	return out
-}
-
-func writeJSON(w http.ResponseWriter, status int, body any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(body)
 }

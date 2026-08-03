@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -33,17 +32,13 @@ type SearchResult struct {
 }
 
 func HandleSemanticSearch(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		logger.Logf(r.Context(), "HandleSemanticSearch: method %s not allowed", r.Method)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, "HandleSemanticSearch", http.MethodGet) {
 		return
 	}
 
 	query := r.URL.Query().Get("q")
 	logger.Logf(r.Context(), "HandleSemanticSearch: query=%q", query)
-	if query == "" {
-		logger.Logf(r.Context(), "HandleSemanticSearch: missing query parameter 'q'")
-		http.Error(w, "missing query parameter 'q'", http.StatusBadRequest)
+	if query == "" && handleBadRequest(w, r, "HandleSemanticSearch", "missing query parameter 'q'", "missing query parameter 'q'") {
 		return
 	}
 
@@ -54,9 +49,7 @@ func HandleSemanticSearch(w http.ResponseWriter, r *http.Request) {
 
 	// Compute embedding for search query
 	queryVec, err := embeddings.ActiveEmbedder.Embed(ctx, query)
-	if err != nil {
-		logger.Logf(r.Context(), "Error: failed to embed semantic search query: %v", err)
-		http.Error(w, "failed to embed search query: "+err.Error(), http.StatusInternalServerError)
+	if handleServerError(w, r, "HandleSemanticSearch", "failed to embed search query", err) {
 		return
 	}
 
@@ -71,7 +64,7 @@ func HandleSemanticSearch(w http.ResponseWriter, r *http.Request) {
 		FROM document_pages p
 		JOIN documents d ON p.document_id = d.id
 	`
-	
+
 	var args []interface{}
 	args = append(args, queryVecStr)
 
@@ -89,10 +82,8 @@ func HandleSemanticSearch(w http.ResponseWriter, r *http.Request) {
 	// whether the optional document filter consumed $2, which is why
 	// VisibilityClause takes startIdx rather than hardcoding $1.
 	if !permissions.IsAdmin(r) {
-		userID := permissions.CurrentUserID(r)
-		if userID == "" {
-			logger.Logf(r.Context(), "HandleSemanticSearch: no authenticated user on request")
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+		userID, ok := requireUser(w, r, "HandleSemanticSearch")
+		if !ok {
 			return
 		}
 		clause, clauseArgs := permissions.VisibilityClause(userID, len(args)+1, "d.")
@@ -107,65 +98,58 @@ func HandleSemanticSearch(w http.ResponseWriter, r *http.Request) {
 	sqlQuery += " ORDER BY p.embedding <=> $1 LIMIT 10"
 
 	rows, err := db.DB.Query(sqlQuery, args...)
-	if err != nil {
-		logger.Logf(r.Context(), "Error: semantic search database query failed: %v", err)
-		http.Error(w, "database query failed: "+err.Error(), http.StatusInternalServerError)
+	if handleServerError(w, r, "HandleSemanticSearch", "database query failed", err) {
 		return
 	}
 	defer rows.Close()
 
 	results := []SearchResult{}
 	for rows.Next() {
-		var r SearchResult
+		var sr SearchResult
 		var docID string
-		if err := rows.Scan(&docID, &r.DocName, &r.PageNumber, &r.Text, &r.Similarity); err != nil {
-			logger.Logf(ctx, "Error: failed to scan semantic search row: %v", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+		if err := rows.Scan(&docID, &sr.DocName, &sr.PageNumber, &sr.Text, &sr.Similarity); err != nil {
+			if handleServerError(w, r, "HandleSemanticSearch", "failed to scan row", err) {
+				return
+			}
 		}
-		r.DocumentID = docID
-		
+		sr.DocumentID = docID
+
 		// Create a smart snippet around matches or just truncate
-		if len(r.Text) > 300 {
+		if len(sr.Text) > 300 {
 			// Find index of query word in text for better snippet context if possible
-			lowerText := strings.ToLower(r.Text)
+			lowerText := strings.ToLower(sr.Text)
 			lowerQuery := strings.ToLower(query)
 			idx := strings.Index(lowerText, lowerQuery)
 			if idx > 100 {
-				r.Text = "..." + r.Text[idx-100:idx+200] + "..."
+				sr.Text = "..." + sr.Text[idx-100:idx+200] + "..."
 			} else {
-				r.Text = r.Text[:300] + "..."
+				sr.Text = sr.Text[:300] + "..."
 			}
 		}
 
-		results = append(results, r)
+		results = append(results, sr)
 	}
 
 	logger.Logf(ctx, "HandleSemanticSearch: returned %d results", len(results))
 	metrics.VectorSearchDuration.Observe(time.Since(start).Seconds())
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(results)
+	respondJSON(w, http.StatusOK, results)
 }
 
 func HandleDocumentSearchPreviewPDF(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		logger.Logf(r.Context(), "HandleDocumentSearchPreviewPDF: method %s not allowed", r.Method)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, "HandleDocumentSearchPreviewPDF", http.MethodGet) {
 		return
 	}
 
-	docID := r.PathValue("id")
+	docID, ok := parseUUIDParam(w, r, "HandleDocumentSearchPreviewPDF", "id")
+	if !ok {
+		return
+	}
+
 	q := r.URL.Query().Get("q")
 	logger.Logf(r.Context(), "HandleDocumentSearchPreviewPDF: docID=%s q=%q", docID, q)
 
-	if _, err := uuid.Parse(docID); err != nil {
-		http.Error(w, "invalid UUID format", http.StatusBadRequest)
-		return
-	}
-
-	if q == "" {
-		http.Error(w, "missing query parameter 'q'", http.StatusBadRequest)
+	if q == "" && handleBadRequest(w, r, "HandleDocumentSearchPreviewPDF", "missing query parameter 'q'", "missing query parameter 'q'") {
 		return
 	}
 
@@ -177,9 +161,7 @@ func HandleDocumentSearchPreviewPDF(w http.ResponseWriter, r *http.Request) {
 
 	// 1. Compute embedding for the search query
 	queryVec, err := embeddings.ActiveEmbedder.Embed(ctx, q)
-	if err != nil {
-		logger.Logf(ctx, "Error: failed to embed search query: %v", err)
-		http.Error(w, "failed to embed search query: "+err.Error(), http.StatusInternalServerError)
+	if handleServerError(w, r, "HandleDocumentSearchPreviewPDF", "failed to embed search query", err) {
 		return
 	}
 	queryVecStr := db.Float32ArrayToString(queryVec)
@@ -192,9 +174,7 @@ func HandleDocumentSearchPreviewPDF(w http.ResponseWriter, r *http.Request) {
 		ORDER BY embedding <=> $2
 		LIMIT 10
 	`, docID, queryVecStr)
-	if err != nil {
-		logger.Logf(ctx, "Error: failed to query matching pages: %v", err)
-		http.Error(w, "database query failed: "+err.Error(), http.StatusInternalServerError)
+	if handleServerError(w, r, "HandleDocumentSearchPreviewPDF", "database query failed", err) {
 		return
 	}
 	defer rows.Close()
@@ -207,15 +187,14 @@ func HandleDocumentSearchPreviewPDF(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var m pageMatch
 		if err := rows.Scan(&m.pageNum, &m.storagePath); err != nil {
-			logger.Logf(ctx, "Error: failed to scan page match: %v", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			if handleServerError(w, r, "HandleDocumentSearchPreviewPDF", "failed to scan page match", err) {
+				return
+			}
 		}
 		matches = append(matches, m)
 	}
 
-	if len(matches) == 0 {
-		http.Error(w, "no matching pages found", http.StatusNotFound)
+	if len(matches) == 0 && handleNotFound(w, r, "HandleDocumentSearchPreviewPDF", "no matching pages found", "no matching pages found") {
 		return
 	}
 
@@ -226,9 +205,7 @@ func HandleDocumentSearchPreviewPDF(w http.ResponseWriter, r *http.Request) {
 
 	// 4. Create a temporary directory to download the single-page PDFs
 	tempDir, err := os.MkdirTemp("", "search-preview-*")
-	if err != nil {
-		logger.Logf(ctx, "Error: failed to create temp dir: %v", err)
-		http.Error(w, "failed to create temporary workspace", http.StatusInternalServerError)
+	if handleServerError(w, r, "HandleDocumentSearchPreviewPDF", "failed to create temporary workspace", err) {
 		return
 	}
 	defer os.RemoveAll(tempDir)
@@ -237,9 +214,7 @@ func HandleDocumentSearchPreviewPDF(w http.ResponseWriter, r *http.Request) {
 	for _, m := range matches {
 		destPath := filepath.Join(tempDir, fmt.Sprintf("page_%d.pdf", m.pageNum))
 		err := storage.DownloadFile(ctx, m.storagePath, destPath)
-		if err != nil {
-			logger.Logf(ctx, "Error: failed to download page %d: %v", m.pageNum, err)
-			http.Error(w, "failed to download page from storage", http.StatusInternalServerError)
+		if handleServerError(w, r, "HandleDocumentSearchPreviewPDF", "failed to download page from storage", err) {
 			return
 		}
 		localPaths = append(localPaths, destPath)
@@ -247,17 +222,13 @@ func HandleDocumentSearchPreviewPDF(w http.ResponseWriter, r *http.Request) {
 
 	// 5. Merge the PDFs using MergeFilesSafe
 	mergedPath, err := pdf.MergeFilesSafe(localPaths, tempDir)
-	if err != nil {
-		logger.Logf(ctx, "Error: failed to merge pages: %v", err)
-		http.Error(w, "failed to generate preview PDF: "+err.Error(), http.StatusInternalServerError)
+	if handleServerError(w, r, "HandleDocumentSearchPreviewPDF", "failed to generate preview PDF", err) {
 		return
 	}
 
 	// 6. Stream the merged PDF to the client
 	f, err := os.Open(mergedPath)
-	if err != nil {
-		logger.Logf(ctx, "Error: failed to open merged PDF: %v", err)
-		http.Error(w, "failed to read preview PDF", http.StatusInternalServerError)
+	if handleServerError(w, r, "HandleDocumentSearchPreviewPDF", "failed to read preview PDF", err) {
 		return
 	}
 	defer f.Close()
