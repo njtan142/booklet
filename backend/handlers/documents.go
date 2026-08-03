@@ -3,7 +3,7 @@ package handlers
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -49,9 +49,7 @@ type DocumentResponse struct {
 }
 
 func HandleListDocuments(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		logger.Logf(r.Context(), "HandleListDocuments: method %s not allowed", r.Method)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, "HandleListDocuments", http.MethodGet) {
 		return
 	}
 
@@ -77,10 +75,8 @@ func HandleListDocuments(w http.ResponseWriter, r *http.Request) {
 		FROM documents WHERE is_dismissed = FALSE`
 	var args []any
 	if !permissions.IsAdmin(r) {
-		userID := permissions.CurrentUserID(r)
-		if userID == "" {
-			logger.Logf(r.Context(), "HandleListDocuments: no authenticated user on request")
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+		userID, ok := requireUser(w, r, "HandleListDocuments")
+		if !ok {
 			return
 		}
 		clause, clauseArgs := permissions.VisibilityClause(userID, len(args)+1, "")
@@ -90,9 +86,7 @@ func HandleListDocuments(w http.ResponseWriter, r *http.Request) {
 	query += " ORDER BY created_at DESC"
 
 	rows, err := db.DB.Query(query, args...)
-	if err != nil {
-		logger.Logf(r.Context(), "Error: failed to query documents list: %v", err)
-		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
+	if handleServerError(w, r, "HandleListDocuments", "database error", err) {
 		return
 	}
 	defer rows.Close()
@@ -102,17 +96,16 @@ func HandleListDocuments(w http.ResponseWriter, r *http.Request) {
 		var d DocumentResponse
 		var id string
 		if err := rows.Scan(&id, &d.Name, &d.TotalPages, &d.SplitPages, &d.ParsedPages, &d.Status, &d.Kind, &d.MimeType, &d.CreatedAt, &d.UpdatedAt); err != nil {
-			logger.Logf(r.Context(), "Error: failed to scan document row: %v", err)
-			http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
-			return
+			if handleServerError(w, r, "HandleListDocuments", "database error", err) {
+				return
+			}
 		}
 		d.ID = id
 		docs = append(docs, d)
 	}
 
 	logger.Logf(r.Context(), "HandleListDocuments: successfully retrieved %d active documents", len(docs))
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(docs)
+	respondJSON(w, http.StatusOK, docs)
 }
 
 type DocumentPageDetail struct {
@@ -129,18 +122,15 @@ type DocumentDetailResponse struct {
 
 func HandleRenameDocument(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPatch && r.Method != http.MethodPost {
-		logger.Logf(r.Context(), "HandleRenameDocument: method %s not allowed", r.Method)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		handleMethodNotAllowed(w, r, "HandleRenameDocument")
 		return
 	}
 
-	docID := r.PathValue("id")
-	logger.Logf(r.Context(), "HandleRenameDocument: request to rename docID=%s", docID)
-	if _, err := uuid.Parse(docID); err != nil {
-		logger.Logf(r.Context(), "HandleRenameDocument: invalid UUID format: %s", docID)
-		http.Error(w, "invalid UUID format", http.StatusBadRequest)
+	docID, ok := parseUUIDParam(w, r, "HandleRenameDocument", "id")
+	if !ok {
 		return
 	}
+	logger.Logf(r.Context(), "HandleRenameDocument: request to rename docID=%s", docID)
 
 	if !permissions.EnforceDocument(w, r, docID, permissions.PermWrite) {
 		return
@@ -149,114 +139,85 @@ func HandleRenameDocument(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name string `json:"name"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		logger.Logf(r.Context(), "HandleRenameDocument: invalid JSON: %v", err)
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
+	if !decodeJSON(w, r, "HandleRenameDocument", &req) {
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
-	if req.Name == "" {
-		logger.Logf(r.Context(), "HandleRenameDocument: empty name rejected")
-		http.Error(w, "name must not be empty", http.StatusBadRequest)
+	if req.Name == "" && handleBadRequest(w, r, "HandleRenameDocument", "empty name rejected", "name must not be empty") {
 		return
 	}
 
 	_, err := db.DB.Exec(`UPDATE documents SET name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, req.Name, docID)
-	if err != nil {
-		logger.Logf(r.Context(), "Error: failed to rename document %s: %v", docID, err)
-		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
+	if handleServerError(w, r, "HandleRenameDocument", "database error", err) {
 		return
 	}
 
 	logger.Logf(r.Context(), "Document %s renamed to %q", docID, req.Name)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"id": docID, "name": req.Name})
+	respondJSON(w, http.StatusOK, map[string]string{"id": docID, "name": req.Name})
 }
 
-func HandleDeleteDocument(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodDelete && r.Method != http.MethodPost {
-		logger.Logf(r.Context(), "HandleDeleteDocument: method %s not allowed", r.Method)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	docID := r.PathValue("id")
-	logger.Logf(r.Context(), "HandleDeleteDocument: request to delete docID=%s", docID)
-	if _, err := uuid.Parse(docID); err != nil {
-		logger.Logf(r.Context(), "HandleDeleteDocument: invalid UUID format: %s", docID)
-		http.Error(w, "invalid UUID format", http.StatusBadRequest)
-		return
-	}
-
-	if !permissions.EnforceDocument(w, r, docID, permissions.PermWrite) {
-		return
-	}
-
-	ctx := r.Context()
-
+func deleteDocumentInternal(ctx context.Context, docID string) error {
 	var originalStoragePath string
-	err := db.DB.QueryRow(`SELECT original_storage_path FROM documents WHERE id = $1`, docID).Scan(&originalStoragePath)
-	if err == sql.ErrNoRows {
-		logger.Logf(r.Context(), "HandleDeleteDocument: document %s not found", docID)
-		http.Error(w, "document not found", http.StatusNotFound)
-		return
-	} else if err != nil {
-		logger.Logf(r.Context(), "Error: failed to query document %s for deletion: %v", docID, err)
-		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
-		return
+	err := db.DB.QueryRowContext(ctx, `SELECT original_storage_path FROM documents WHERE id = $1`, docID).Scan(&originalStoragePath)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("failed to query document: %w", err)
 	}
 
-	pageRows, err := db.DB.Query(`SELECT storage_path FROM document_pages WHERE document_id = $1`, docID)
-	if err != nil {
-		logger.Logf(r.Context(), "Error: failed to query pages for document %s deletion: %v", docID, err)
-		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	defer pageRows.Close()
-
+	pageRows, err := db.DB.QueryContext(ctx, `SELECT storage_path FROM document_pages WHERE document_id = $1`, docID)
 	var pagePaths []string
-	for pageRows.Next() {
-		var p string
-		if err := pageRows.Scan(&p); err != nil {
-			logger.Logf(r.Context(), "Error: failed to scan page path for document %s deletion: %v", docID, err)
-			http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
-			return
+	if err == nil {
+		for pageRows.Next() {
+			var p string
+			if scanErr := pageRows.Scan(&p); scanErr == nil && p != "" {
+				pagePaths = append(pagePaths, p)
+			}
 		}
-		pagePaths = append(pagePaths, p)
+		pageRows.Close()
 	}
 
-	_, err = db.DB.Exec(`DELETE FROM document_pages WHERE document_id = $1`, docID)
-	if err != nil {
-		logger.Logf(r.Context(), "Error: failed to delete pages for document %s: %v", docID, err)
-		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
-		return
+	if _, err := db.DB.ExecContext(ctx, `DELETE FROM document_pages WHERE document_id = $1`, docID); err != nil {
+		return fmt.Errorf("failed to delete page records: %w", err)
 	}
-
-	_, err = db.DB.Exec(`DELETE FROM compiled_booklets WHERE document_id = $1`, docID)
-	if err != nil {
-		logger.Logf(r.Context(), "Error: failed to delete booklets for document %s: %v", docID, err)
-		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
-		return
+	if _, err := db.DB.ExecContext(ctx, `DELETE FROM compiled_booklets WHERE document_id = $1`, docID); err != nil {
+		return fmt.Errorf("failed to delete compiled booklets: %w", err)
 	}
-
-	_, err = db.DB.Exec(`DELETE FROM documents WHERE id = $1`, docID)
-	if err != nil {
-		logger.Logf(r.Context(), "Error: failed to delete document %s: %v", docID, err)
-		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
-		return
+	if _, err := db.DB.ExecContext(ctx, `DELETE FROM documents WHERE id = $1`, docID); err != nil {
+		return fmt.Errorf("failed to delete document row: %w", err)
 	}
 
 	if originalStoragePath != "" {
 		if err := storage.DeleteFile(ctx, originalStoragePath); err != nil {
-			logger.Logf(r.Context(), "Warning: failed to delete original file %s for document %s: %v", originalStoragePath, docID, err)
+			logger.Logf(ctx, "Warning: failed to delete original file %s for document %s: %v", originalStoragePath, docID, err)
 		}
 	}
 	for _, p := range pagePaths {
 		if p != "" {
 			if err := storage.DeleteFile(ctx, p); err != nil {
-				logger.Logf(r.Context(), "Warning: failed to delete page file %s for document %s: %v", p, docID, err)
+				logger.Logf(ctx, "Warning: failed to delete page file %s for document %s: %v", p, docID, err)
 			}
 		}
+	}
+	return nil
+}
+
+func HandleDeleteDocument(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete && r.Method != http.MethodPost {
+		handleMethodNotAllowed(w, r, "HandleDeleteDocument")
+		return
+	}
+
+	docID, ok := parseUUIDParam(w, r, "HandleDeleteDocument", "id")
+	if !ok {
+		return
+	}
+	logger.Logf(r.Context(), "HandleDeleteDocument: request to delete docID=%s", docID)
+
+	if !permissions.EnforceDocument(w, r, docID, permissions.PermWrite) {
+		return
+	}
+
+	if err := deleteDocumentInternal(r.Context(), docID); handleServerError(w, r, "HandleDeleteDocument", "failed to delete document", err) {
+		return
 	}
 
 	logger.Logf(r.Context(), "Document %s deleted successfully", docID)
@@ -273,22 +234,17 @@ type BulkDeleteResponse struct {
 }
 
 func HandleBulkDeleteDocuments(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		logger.Logf(r.Context(), "HandleBulkDeleteDocuments: method %s not allowed", r.Method)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, "HandleBulkDeleteDocuments", http.MethodPost) {
 		return
 	}
 
 	var req BulkDeleteRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		logger.Logf(r.Context(), "HandleBulkDeleteDocuments: failed to decode body: %v", err)
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+	if !decodeJSON(w, r, "HandleBulkDeleteDocuments", &req) {
 		return
 	}
 
 	if len(req.IDs) == 0 {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(BulkDeleteResponse{DeletedCount: 0, DeletedIDs: []string{}})
+		respondJSON(w, http.StatusOK, BulkDeleteResponse{DeletedCount: 0, DeletedIDs: []string{}})
 		return
 	}
 
@@ -303,8 +259,7 @@ func HandleBulkDeleteDocuments(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(validIDs) == 0 {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(BulkDeleteResponse{DeletedCount: 0, DeletedIDs: []string{}})
+		respondJSON(w, http.StatusOK, BulkDeleteResponse{DeletedCount: 0, DeletedIDs: []string{}})
 		return
 	}
 
@@ -314,16 +269,12 @@ func HandleBulkDeleteDocuments(w http.ResponseWriter, r *http.Request) {
 	if permissions.IsAdmin(r) {
 		targetIDs = validIDs
 	} else {
-		userID := permissions.CurrentUserID(r)
-		if userID == "" {
-			logger.Logf(ctx, "HandleBulkDeleteDocuments: unauthorized")
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+		userID, ok := requireUser(w, r, "HandleBulkDeleteDocuments")
+		if !ok {
 			return
 		}
 		_, denied, err := permissions.CheckMany(ctx, validIDs, userID, permissions.PermWrite)
-		if err != nil {
-			logger.Logf(ctx, "HandleBulkDeleteDocuments: permission check failed: %v", err)
-			http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
+		if handleServerError(w, r, "HandleBulkDeleteDocuments", "permission check failed", err) {
 			return
 		}
 		deniedMap := make(map[string]bool)
@@ -338,59 +289,21 @@ func HandleBulkDeleteDocuments(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(targetIDs) == 0 {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(BulkDeleteResponse{DeletedCount: 0, DeletedIDs: []string{}})
+		respondJSON(w, http.StatusOK, BulkDeleteResponse{DeletedCount: 0, DeletedIDs: []string{}})
 		return
 	}
 
 	var deletedIDs []string
 	for _, docID := range targetIDs {
-		var originalStoragePath string
-		err := db.DB.QueryRowContext(ctx, `SELECT original_storage_path FROM documents WHERE id = $1`, docID).Scan(&originalStoragePath)
-		if err == sql.ErrNoRows {
-			continue
-		} else if err != nil {
-			logger.Logf(ctx, "HandleBulkDeleteDocuments: failed to query doc %s: %v", docID, err)
-			continue
-		}
-
-		pageRows, err := db.DB.QueryContext(ctx, `SELECT storage_path FROM document_pages WHERE document_id = $1`, docID)
-		var pagePaths []string
-		if err == nil {
-			for pageRows.Next() {
-				var p string
-				if scanErr := pageRows.Scan(&p); scanErr == nil && p != "" {
-					pagePaths = append(pagePaths, p)
-				}
-			}
-			pageRows.Close()
-		}
-
-		_, _ = db.DB.ExecContext(ctx, `DELETE FROM document_pages WHERE document_id = $1`, docID)
-		_, _ = db.DB.ExecContext(ctx, `DELETE FROM compiled_booklets WHERE document_id = $1`, docID)
-		_, err = db.DB.ExecContext(ctx, `DELETE FROM documents WHERE id = $1`, docID)
-		if err != nil {
+		if err := deleteDocumentInternal(ctx, docID); err != nil {
 			logger.Logf(ctx, "HandleBulkDeleteDocuments: failed to delete doc %s: %v", docID, err)
 			continue
 		}
-
-		if originalStoragePath != "" {
-			if err := storage.DeleteFile(ctx, originalStoragePath); err != nil {
-				logger.Logf(ctx, "Warning: failed to delete original file %s for document %s: %v", originalStoragePath, docID, err)
-			}
-		}
-		for _, p := range pagePaths {
-			if err := storage.DeleteFile(ctx, p); err != nil {
-				logger.Logf(ctx, "Warning: failed to delete page file %s for document %s: %v", p, docID, err)
-			}
-		}
-
 		deletedIDs = append(deletedIDs, docID)
 	}
 
 	logger.Logf(ctx, "HandleBulkDeleteDocuments: deleted %d documents", len(deletedIDs))
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(BulkDeleteResponse{
+	respondJSON(w, http.StatusOK, BulkDeleteResponse{
 		DeletedCount: len(deletedIDs),
 		DeletedIDs:   deletedIDs,
 	})
@@ -398,28 +311,22 @@ func HandleBulkDeleteDocuments(w http.ResponseWriter, r *http.Request) {
 
 
 func HandleDismissDocument(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		logger.Logf(r.Context(), "HandleDismissDocument: method %s not allowed", r.Method)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, "HandleDismissDocument", http.MethodPost) {
 		return
 	}
 
-	docID := r.PathValue("id")
-	logger.Logf(r.Context(), "HandleDismissDocument: request to dismiss docID=%s", docID)
-	if _, err := uuid.Parse(docID); err != nil {
-		logger.Logf(r.Context(), "HandleDismissDocument: invalid UUID format: %s", docID)
-		http.Error(w, "invalid UUID format", http.StatusBadRequest)
+	docID, ok := parseUUIDParam(w, r, "HandleDismissDocument", "id")
+	if !ok {
 		return
 	}
+	logger.Logf(r.Context(), "HandleDismissDocument: request to dismiss docID=%s", docID)
 
 	if !permissions.EnforceDocument(w, r, docID, permissions.PermWrite) {
 		return
 	}
 
 	_, err := db.DB.Exec(`UPDATE documents SET is_dismissed = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = $1`, docID)
-	if err != nil {
-		logger.Logf(r.Context(), "Error: failed to dismiss document %s: %v", docID, err)
-		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
+	if handleServerError(w, r, "HandleDismissDocument", "database error", err) {
 		return
 	}
 
@@ -433,19 +340,15 @@ func HandleDismissDocument(w http.ResponseWriter, r *http.Request) {
 }
 
 func HandleGetDocument(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		logger.Logf(r.Context(), "HandleGetDocument: method %s not allowed", r.Method)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, "HandleGetDocument", http.MethodGet) {
 		return
 	}
 
-	docID := r.PathValue("id")
-	logger.Logf(r.Context(), "HandleGetDocument: fetching document docID=%s", docID)
-	if _, err := uuid.Parse(docID); err != nil {
-		logger.Logf(r.Context(), "HandleGetDocument: invalid UUID format: %s", docID)
-		http.Error(w, "invalid UUID format", http.StatusBadRequest)
+	docID, ok := parseUUIDParam(w, r, "HandleGetDocument", "id")
+	if !ok {
 		return
 	}
+	logger.Logf(r.Context(), "HandleGetDocument: fetching document docID=%s", docID)
 
 	if !permissions.EnforceDocument(w, r, docID, permissions.PermRead) {
 		return
@@ -457,13 +360,7 @@ func HandleGetDocument(w http.ResponseWriter, r *http.Request) {
 		SELECT id, name, COALESCE(total_pages, 0), split_pages, parsed_pages, status, kind, mime_type, created_at, updated_at 
 		FROM documents WHERE id = $1`, docID).Scan(&id, &d.Name, &d.TotalPages, &d.SplitPages, &d.ParsedPages, &d.Status, &d.Kind, &d.MimeType, &d.CreatedAt, &d.UpdatedAt)
 
-	if err == sql.ErrNoRows {
-		logger.Logf(r.Context(), "GetDocument: document %s not found", docID)
-		http.Error(w, "document not found", http.StatusNotFound)
-		return
-	} else if err != nil {
-		logger.Logf(r.Context(), "Error: failed to query document %s: %v", docID, err)
-		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
+	if handleDBError(w, r, "GetDocument", "document not found", err) {
 		return
 	}
 	d.ID = id
@@ -476,9 +373,7 @@ func HandleGetDocument(w http.ResponseWriter, r *http.Request) {
 		WHERE document_id = $1 
 		ORDER BY page_number ASC`, docID)
 
-	if err != nil {
-		logger.Logf(r.Context(), "Error: failed to query pages for document %s: %v", docID, err)
-		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
+	if handleServerError(w, r, "HandleGetDocument", "database error", err) {
 		return
 	}
 	defer rows.Close()
@@ -487,9 +382,9 @@ func HandleGetDocument(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var p DocumentPageDetail
 		if err := rows.Scan(&p.PageNumber, &p.Text, &p.Width, &p.Height); err != nil {
-			logger.Logf(r.Context(), "Error: failed to scan page row for document %s: %v", docID, err)
-			http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
-			return
+			if handleServerError(w, r, "HandleGetDocument", "database error", err) {
+				return
+			}
 		}
 		// Truncate preview text
 		if len(p.Text) > 200 {
@@ -500,31 +395,23 @@ func HandleGetDocument(w http.ResponseWriter, r *http.Request) {
 	d.Pages = pages
 
 	logger.Logf(r.Context(), "HandleGetDocument: returning document details with %d pages", len(pages))
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(d)
+	respondJSON(w, http.StatusOK, d)
 }
 
 func HandleGetPagePDF(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		logger.Logf(r.Context(), "HandleGetPagePDF: method %s not allowed", r.Method)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, "HandleGetPagePDF", http.MethodGet) {
 		return
 	}
 
-	docID := r.PathValue("id")
+	docID, ok := parseUUIDParam(w, r, "HandleGetPagePDF", "id")
+	if !ok {
+		return
+	}
 	pageNumStr := r.PathValue("page_number")
 	logger.Logf(r.Context(), "HandleGetPagePDF: request page docID=%s pageNum=%s", docID, pageNumStr)
 
-	if _, err := uuid.Parse(docID); err != nil {
-		logger.Logf(r.Context(), "HandleGetPagePDF: invalid UUID format: %s", docID)
-		http.Error(w, "invalid UUID format", http.StatusBadRequest)
-		return
-	}
-
 	pageNum, err := strconv.Atoi(pageNumStr)
-	if err != nil || pageNum < 1 {
-		logger.Logf(r.Context(), "HandleGetPagePDF: invalid page number: %s", pageNumStr)
-		http.Error(w, "invalid page number", http.StatusBadRequest)
+	if (err != nil || pageNum < 1) && handleBadRequest(w, r, "HandleGetPagePDF", "invalid page number", "invalid page number") {
 		return
 	}
 
@@ -539,13 +426,7 @@ func HandleGetPagePDF(w http.ResponseWriter, r *http.Request) {
 		FROM document_pages 
 		WHERE document_id = $1 AND page_number = $2`, docID, pageNum).Scan(&storagePath)
 
-	if err == sql.ErrNoRows {
-		logger.Logf(r.Context(), "HandleGetPagePDF: page %d of document %s not found in DB", pageNum, docID)
-		http.Error(w, "page not found", http.StatusNotFound)
-		return
-	} else if err != nil {
-		logger.Logf(r.Context(), "Error: failed to query page PDF %s/%d: %v", docID, pageNum, err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if handleDBError(w, r, "HandleGetPagePDF", "page not found", err) {
 		return
 	}
 
@@ -553,9 +434,7 @@ func HandleGetPagePDF(w http.ResponseWriter, r *http.Request) {
 	// Get file from MinIO and stream it
 	ctx := r.Context()
 	object, err := storage.MinioClient.GetObject(ctx, storage.BucketName, storagePath, minio.GetObjectOptions{})
-	if err != nil {
-		logger.Logf(r.Context(), "Error: failed to get page PDF from MinIO: %v", err)
-		http.Error(w, "failed to read page from storage", http.StatusInternalServerError)
+	if handleServerError(w, r, "HandleGetPagePDF", "failed to read page from storage", err) {
 		return
 	}
 	defer object.Close()
@@ -583,39 +462,29 @@ func init() {
 }
 
 func HandleUploadDocument(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		logger.Logf(r.Context(), "HandleUploadDocument: method %s not allowed", r.Method)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, "HandleUploadDocument", http.MethodPost) {
 		return
 	}
 
 	// 32 MB max memory for parsing form
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		logger.Logf(r.Context(), "Error: failed to parse multipart form for upload: %v", err)
-		http.Error(w, "failed to parse multipart form", http.StatusBadRequest)
+	if err := r.ParseMultipartForm(32 << 20); handleServerError(w, r, "HandleUploadDocument", "failed to parse multipart form", err) {
 		return
 	}
 
 	file, header, err := r.FormFile("file")
-	if err != nil {
-		logger.Logf(r.Context(), "Error: missing file in upload request: %v", err)
-		http.Error(w, "missing file in form-data", http.StatusBadRequest)
+	if err != nil && handleBadRequest(w, r, "HandleUploadDocument", "missing file in upload request", "missing file in form-data") {
 		return
 	}
 	defer file.Close()
 
 	// Resolve the owner before touching storage: an upload with no owner would be
 	// an unreachable row under the permission model.
-	ownerID := permissions.CurrentUserID(r)
-	if ownerID == "" {
-		logger.Logf(r.Context(), "HandleUploadDocument: no authenticated user on upload request")
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	ownerID, ok := requireUser(w, r, "HandleUploadDocument")
+	if !ok {
 		return
 	}
 	groupID, err := db.PrimaryGroupID(ownerID)
-	if err != nil {
-		logger.Logf(r.Context(), "Error: failed to resolve primary group for %s: %v", ownerID, err)
-		http.Error(w, "failed to resolve user group", http.StatusInternalServerError)
+	if handleServerError(w, r, "HandleUploadDocument", "failed to resolve user group", err) {
 		return
 	}
 
@@ -624,9 +493,7 @@ func HandleUploadDocument(w http.ResponseWriter, r *http.Request) {
 
 	// Create local temp file to inspect PDF page count and perform split
 	tempDir, err := os.MkdirTemp("", "booklet-upload-*")
-	if err != nil {
-		logger.Logf(r.Context(), "Error: failed to create temp dir for upload: %v", err)
-		http.Error(w, "failed to create temp dir", http.StatusInternalServerError)
+	if handleServerError(w, r, "HandleUploadDocument", "failed to create temp dir", err) {
 		return
 	}
 	// We clean up the temp directory after processing in background worker, not here.
@@ -635,17 +502,17 @@ func HandleUploadDocument(w http.ResponseWriter, r *http.Request) {
 	outField, err := os.Create(localPath)
 	if err != nil {
 		os.RemoveAll(tempDir)
-		logger.Logf(r.Context(), "Error: failed to create temp file %s: %v", localPath, err)
-		http.Error(w, "failed to create temp file", http.StatusInternalServerError)
-		return
+		if handleServerError(w, r, "HandleUploadDocument", "failed to create temp file", err) {
+			return
+		}
 	}
 
 	if _, err := io.Copy(outField, file); err != nil {
 		outField.Close()
 		os.RemoveAll(tempDir)
-		logger.Logf(r.Context(), "Error: failed to save uploaded file to %s: %v", localPath, err)
-		http.Error(w, "failed to save uploaded file", http.StatusInternalServerError)
-		return
+		if handleServerError(w, r, "HandleUploadDocument", "failed to save uploaded file", err) {
+			return
+		}
 	}
 	outField.Close()
 
@@ -654,9 +521,9 @@ func HandleUploadDocument(w http.ResponseWriter, r *http.Request) {
 	err = storage.UploadFile(r.Context(), originalKey, localPath, "application/pdf")
 	if err != nil {
 		os.RemoveAll(tempDir)
-		logger.Logf(r.Context(), "Error: failed to upload original PDF %s to MinIO: %v", docID, err)
-		http.Error(w, "storage error: "+err.Error(), http.StatusInternalServerError)
-		return
+		if handleServerError(w, r, "HandleUploadDocument", "failed to upload original PDF to storage", err) {
+			return
+		}
 	}
 
 	// Insert document metadata with processing status
@@ -668,9 +535,9 @@ func HandleUploadDocument(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		os.RemoveAll(tempDir)
-		logger.Logf(r.Context(), "Error: failed to insert document %s metadata into database: %v", docID, err)
-		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
-		return
+		if handleServerError(w, r, "HandleUploadDocument", "database error", err) {
+			return
+		}
 	}
 
 	metrics.DocumentUploadsTotal.With(prometheus.Labels{"status": "queued"}).Inc()
@@ -684,9 +551,7 @@ func HandleUploadDocument(w http.ResponseWriter, r *http.Request) {
 		go runBackgroundDocumentProcessing(docID, localPath, tempDir)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(map[string]string{
+	respondJSON(w, http.StatusAccepted, map[string]string{
 		"message":     "Document uploaded and processing started.",
 		"document_id": docID.String(),
 	})
@@ -868,73 +733,53 @@ func runBackgroundDocumentProcessing(docID uuid.UUID, localPath string, tempDir 
 }
 
 func updateDocStatus(id uuid.UUID, status string) {
+	query := `UPDATE documents SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`
 	if status == "ready" {
-		_, err := db.DB.Exec(`UPDATE documents SET status = $1, split_pages = total_pages, parsed_pages = total_pages, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, status, id)
-		if err != nil {
-			log.Printf("Error: failed to update status for %s to %s: %v", id, status, err)
-		}
-	} else {
-		_, err := db.DB.Exec(`UPDATE documents SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, status, id)
-		if err != nil {
-			log.Printf("Error: failed to update status for %s to %s: %v", id, status, err)
-		}
+		query = `UPDATE documents SET status = $1, split_pages = total_pages, parsed_pages = total_pages, updated_at = CURRENT_TIMESTAMP WHERE id = $2`
+	}
+	if _, err := db.DB.Exec(query, status, id); err != nil {
+		logger.Logf(context.Background(), "Error: failed to update status for %s to %s: %v", id, status, err)
 	}
 }
 
 func HandleResumeDocument(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		logger.Logf(r.Context(), "HandleResumeDocument: method %s not allowed", r.Method)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, "HandleResumeDocument", http.MethodPost) {
 		return
 	}
 
-	docIDStr := r.PathValue("id")
-	logger.Logf(r.Context(), "HandleResumeDocument: request to resume docID=%s", docIDStr)
-	docID, err := uuid.Parse(docIDStr)
-	if err != nil {
-		logger.Logf(r.Context(), "HandleResumeDocument: invalid UUID format: %s", docIDStr)
-		http.Error(w, "invalid UUID format", http.StatusBadRequest)
+	docIDStr, ok := parseUUIDParam(w, r, "HandleResumeDocument", "id")
+	if !ok {
 		return
 	}
+	logger.Logf(r.Context(), "HandleResumeDocument: request to resume docID=%s", docIDStr)
+	docID := uuid.MustParse(docIDStr)
 
 	if !permissions.EnforceDocument(w, r, docIDStr, permissions.PermWrite) {
 		return
 	}
 
 	var status, originalStoragePath, name string
-	err = db.DB.QueryRow(`
+	err := db.DB.QueryRow(`
 		SELECT status, original_storage_path, name 
 		FROM documents WHERE id = $1`, docID).Scan(&status, &originalStoragePath, &name)
 
-	if err == sql.ErrNoRows {
-		logger.Logf(r.Context(), "HandleResumeDocument: document %s not found", docID)
-		http.Error(w, "document not found", http.StatusNotFound)
-		return
-	} else if err != nil {
-		logger.Logf(r.Context(), "Error: failed to query document details: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if handleDBError(w, r, "HandleResumeDocument", "document not found", err) {
 		return
 	}
 
 	if status == "ready" {
 		logger.Logf(r.Context(), "HandleResumeDocument: document %s is already ready", docID)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"message": "Document is already fully processed", "document_id": docID.String()})
+		respondJSON(w, http.StatusOK, map[string]string{"message": "Document is already fully processed", "document_id": docID.String()})
 		return
 	}
 
-	if originalStoragePath == "" {
-		logger.Logf(r.Context(), "Error: original storage path is empty for document %s", docID)
-		http.Error(w, "original document file is missing, cannot resume", http.StatusConflict)
+	if originalStoragePath == "" && handleConflict(w, r, "HandleResumeDocument", "missing original storage path", "original document file is missing, cannot resume") {
 		return
 	}
 
 	// Create local temp file/dir to download original PDF
 	tempDir, err := os.MkdirTemp("", "booklet-resume-*")
-	if err != nil {
-		logger.Logf(r.Context(), "Error: failed to create temp dir for resume: %v", err)
-		http.Error(w, "failed to create temp dir", http.StatusInternalServerError)
+	if handleServerError(w, r, "HandleResumeDocument", "failed to create temp dir", err) {
 		return
 	}
 
@@ -942,9 +787,9 @@ func HandleResumeDocument(w http.ResponseWriter, r *http.Request) {
 	err = storage.DownloadFile(r.Context(), originalStoragePath, localPath)
 	if err != nil {
 		os.RemoveAll(tempDir)
-		logger.Logf(r.Context(), "Error: failed to download original PDF from storage for resume: %v", err)
-		http.Error(w, "failed to retrieve original file: "+err.Error(), http.StatusInternalServerError)
-		return
+		if handleServerError(w, r, "HandleResumeDocument", "failed to retrieve original file", err) {
+			return
+		}
 	}
 
 	// Update status back to queued/processing so client knows it is running
@@ -958,9 +803,7 @@ func HandleResumeDocument(w http.ResponseWriter, r *http.Request) {
 		go runBackgroundDocumentProcessing(docID, localPath, tempDir)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(map[string]string{
+	respondJSON(w, http.StatusAccepted, map[string]string{
 		"message":     "Document processing resumed successfully.",
 		"document_id": docID.String(),
 	})
