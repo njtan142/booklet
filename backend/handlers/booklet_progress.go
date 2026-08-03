@@ -3,13 +3,12 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"booklet/db"
 	"booklet/logger"
 	"booklet/permissions"
-
-	"github.com/google/uuid"
 )
 
 type BookletProgressRequest struct {
@@ -26,19 +25,15 @@ type BookletProgressResponse struct {
 
 // HandleGetBookletProgress gets the printing progress of a booklet.
 func HandleGetBookletProgress(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		logger.Logf(r.Context(), "HandleGetBookletProgress: method %s not allowed", r.Method)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, "HandleGetBookletProgress", http.MethodGet) {
 		return
 	}
 
-	bookletID := r.PathValue("id")
-	logger.Logf(r.Context(), "HandleGetBookletProgress: request progress for bookletID=%s", bookletID)
-	if _, err := uuid.Parse(bookletID); err != nil {
-		logger.Logf(r.Context(), "HandleGetBookletProgress: invalid UUID format: %s", bookletID)
-		http.Error(w, "invalid UUID format", http.StatusBadRequest)
+	bookletID, ok := parseUUIDParam(w, r, "HandleGetBookletProgress", "id")
+	if !ok {
 		return
 	}
+	logger.Logf(r.Context(), "HandleGetBookletProgress: request progress for bookletID=%s", bookletID)
 
 	// Resolving the parent document also verifies the booklet exists.
 	if !enforceBookletAccess(w, r, bookletID, permissions.PermRead) {
@@ -53,49 +48,39 @@ func HandleGetBookletProgress(w http.ResponseWriter, r *http.Request) {
 		FROM booklet_print_progress
 		WHERE booklet_id = $1`, bookletID).Scan(&batchSize, &completedSheetsStr, &completedBatchesStr)
 
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		// Return default progress
-		resp := BookletProgressResponse{
+		respondJSON(w, http.StatusOK, BookletProgressResponse{
 			BookletID:        bookletID,
 			BatchSize:        10,
 			CompletedSheets:  json.RawMessage(`{}`),
 			CompletedBatches: json.RawMessage(`{}`),
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		})
 		return
-	} else if err != nil {
-		logger.Logf(r.Context(), "Error: failed to query booklet progress %s: %v", bookletID, err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	} else if handleServerError(w, r, "HandleGetBookletProgress", "database error", err) {
 		return
 	}
 
-	resp := BookletProgressResponse{
+	respondJSON(w, http.StatusOK, BookletProgressResponse{
 		BookletID:        bookletID,
 		BatchSize:        batchSize,
 		CompletedSheets:  json.RawMessage(completedSheetsStr),
 		CompletedBatches: json.RawMessage(completedBatchesStr),
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	})
 }
 
 // HandleUpdateBookletProgress saves the printing progress of a booklet.
 func HandleUpdateBookletProgress(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost && r.Method != http.MethodPut {
-		logger.Logf(r.Context(), "HandleUpdateBookletProgress: method %s not allowed", r.Method)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		handleMethodNotAllowed(w, r, "HandleUpdateBookletProgress")
 		return
 	}
 
-	bookletID := r.PathValue("id")
-	logger.Logf(r.Context(), "HandleUpdateBookletProgress: request progress update for bookletID=%s", bookletID)
-	if _, err := uuid.Parse(bookletID); err != nil {
-		logger.Logf(r.Context(), "HandleUpdateBookletProgress: invalid UUID format: %s", bookletID)
-		http.Error(w, "invalid UUID format", http.StatusBadRequest)
+	bookletID, ok := parseUUIDParam(w, r, "HandleUpdateBookletProgress", "id")
+	if !ok {
 		return
 	}
+	logger.Logf(r.Context(), "HandleUpdateBookletProgress: request progress update for bookletID=%s", bookletID)
 
 	// Progress is print state for the booklet, so it requires write on the parent.
 	// Resolving the parent document also verifies the booklet exists.
@@ -104,9 +89,7 @@ func HandleUpdateBookletProgress(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req BookletProgressRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		logger.Logf(r.Context(), "Error: failed to decode booklet progress request JSON: %v", err)
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
+	if !decodeJSON(w, r, "HandleUpdateBookletProgress", &req) {
 		return
 	}
 
@@ -122,15 +105,11 @@ func HandleUpdateBookletProgress(w http.ResponseWriter, r *http.Request) {
 		DO UPDATE SET batch_size = EXCLUDED.batch_size, completed_sheets = EXCLUDED.completed_sheets, updated_at = CURRENT_TIMESTAMP`,
 		bookletID, req.BatchSize, completedSheetsStr)
 
-	if err != nil {
-		logger.Logf(r.Context(), "Error: failed to upsert booklet progress for %s: %v", bookletID, err)
-		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
+	if handleServerError(w, r, "HandleUpdateBookletProgress", "database error", err) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"message": "Booklet progress updated successfully"})
+	respondJSON(w, http.StatusOK, map[string]string{"message": "Booklet progress updated successfully"})
 }
 
 // HandleBookletProgress dispatches GET, POST and PUT methods to progress handlers.
@@ -140,7 +119,6 @@ func HandleBookletProgress(w http.ResponseWriter, r *http.Request) {
 	} else if r.Method == http.MethodPost || r.Method == http.MethodPut {
 		HandleUpdateBookletProgress(w, r)
 	} else {
-		logger.Logf(r.Context(), "HandleBookletProgress: method %s not allowed", r.Method)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		handleMethodNotAllowed(w, r, "HandleBookletProgress")
 	}
 }
